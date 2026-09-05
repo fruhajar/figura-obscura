@@ -127,12 +127,32 @@ jobs:
         run: ls -lh artifacts/
 
       # `gh` ships on the runner, so this needs no third-party action.
-      - name: Create the draft release
+      #
+      # Written to be re-runnable. `fail-fast: false` means one platform can fail
+      # while the others succeed, and the obvious next move is to fix it and run
+      # the workflow again -- but `gh release create` refuses a tag that already
+      # has a release, so a bare create would make this workflow succeed exactly
+      # once per tag and fail every time it mattered. It also collides with a
+      # draft opened by hand in the web UI.
+      #
+      # So: create the release only if it is missing, and upload either way.
+      # --clobber replaces an asset of the same name rather than erroring, which
+      # is what you want when re-running after a fix.
+      - name: Attach the artifacts to a draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
-          gh release create "$tag" artifacts/* \
-            --draft \
-            --title "Figura Obscura ${{ needs.check-version.outputs.version }}" \
-            --notes-file .github/release-notes.md
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists — uploading into it"
+          else
+            echo "creating draft release $tag"
+            gh release create "$tag" \
+              --draft \
+              --title "Figura Obscura ${{ needs.check-version.outputs.version }}" \
+              --notes-file .github/release-notes.md
+          fi
+          gh release upload "$tag" artifacts/* --clobber
+          echo "attached:"
+          gh release view "$tag" --json assets \
+            --jq '.assets[] | "  \(.name)  \(.size) bytes"'
