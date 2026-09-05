@@ -2,7 +2,7 @@
 //! honoring recursion and include/exclude globs (requirement R6).
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use ob_media::{classify, MediaKind};
+use ob_media::{classify_resolved, probe_kind, MediaKind};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -62,8 +62,16 @@ pub fn expand(spec: &InputSpec) -> Result<Vec<MediaItem>, ExpandError> {
     let exclude = build_globset(&spec.exclude)?;
     let mut out: Vec<MediaItem> = Vec::new();
 
-    let keep = |path: &Path| -> Option<MediaItem> {
-        let kind = classify(path);
+    // `named` distinguishes a file the user pointed at from one found by walking.
+    // Naming a file is a statement of intent, so an unrecognised extension is
+    // worth an ffprobe; a directory walk is a search, and must not spawn one per
+    // `.txt`. Without that split, either odd containers stay unusable or
+    // scanning a large folder becomes unusably slow.
+    let keep = |path: &Path, named: bool| -> Option<MediaItem> {
+        let mut kind = classify_resolved(path);
+        if kind == MediaKind::Unknown && named {
+            kind = probe_kind(path);
+        }
         if kind == MediaKind::Unknown {
             return None;
         }
@@ -85,14 +93,14 @@ pub fn expand(spec: &InputSpec) -> Result<Vec<MediaItem>, ExpandError> {
 
     for root in &spec.inputs {
         if root.is_file() {
-            if let Some(item) = keep(root) {
+            if let Some(item) = keep(root, true) {
                 out.push(item);
             }
         } else if root.is_dir() {
             let walker = WalkDir::new(root).max_depth(if spec.recursive { usize::MAX } else { 1 });
             for entry in walker.into_iter().filter_map(Result::ok) {
                 if entry.file_type().is_file() {
-                    if let Some(item) = keep(entry.path()) {
+                    if let Some(item) = keep(entry.path(), false) {
                         out.push(item);
                     }
                 }
@@ -134,7 +142,9 @@ mod tests {
 
     #[test]
     fn empty_include_matches_all_known_media() {
-        // Pure predicate check via classify (no fs walk).
-        assert_eq!(classify(Path::new("x.png")), MediaKind::Image);
+        // Pure predicate check (no fs walk): a path whose extension settles it
+        // resolves without the file needing to exist.
+        assert_eq!(classify_resolved(Path::new("x.png")), MediaKind::Image);
+        assert_eq!(classify_resolved(Path::new("x.wmv")), MediaKind::Video);
     }
 }
