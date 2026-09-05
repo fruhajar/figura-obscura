@@ -313,6 +313,7 @@ impl RunHandle {
                 },
                 output_dir: out,
                 dry_run: false,
+                dry_run_frames: ob_job::DEFAULT_DRY_RUN_FRAMES,
                 detect_every,
                 track: TrackConfig::default(),
                 video_opts: VideoEncodeOpts::default(),

@@ -268,10 +268,24 @@ raising the threshold is visible before committing to a run.
 
 ### Seeing what fires
 
-`obscura process --dry-run` over **stills** performs full detection and reports the
-region count, writing nothing. For *videos* `--dry-run` only checks that the file
-opens — it skips detection and always reports 0 regions — so pull representative
-frames out first (`ffmpeg -i clip.mp4 -vf fps=1 f%04d.png`) and dry-run those.
+`obscura process --dry-run` runs full detection and reports the region count
+per file, writing nothing.
+
+**Stills** are detected whole. **Videos** are sampled: twelve frames by default,
+spread evenly across the clip and taken from the midpoint of each slice, so the
+sample avoids the fade-in and fade-out that bracket most footage. Each sample is
+fetched by seeking rather than by decoding up to it, so dry-running a folder of
+long clips is a matter of seconds. `--dry-run-frames N` buys a more thorough
+audit for proportionally more time.
+
+```sh
+obscura process ./clips -o /tmp/x --dry-run --report audit.csv
+obscura process ./clips -o /tmp/x --dry-run --dry-run-frames 40   # more thorough
+```
+
+The per-file number for a video is the total across its sampled frames, so it is
+a signal of "did this fire, and roughly how much", not a frame-accurate count.
+Zero still means what it should: the detector saw nothing anywhere it looked.
 
 ## Licence
 

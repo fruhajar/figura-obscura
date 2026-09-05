@@ -171,6 +171,132 @@ pub fn probe(path: &Path) -> Result<VideoInfo, MediaError> {
     })
 }
 
+impl VideoInfo {
+    /// Duration in seconds, when the probe knew enough to say.
+    ///
+    /// `frame_count` is itself derived from the container duration when
+    /// `nb_frames` is absent, so this is the same fact read back the other way.
+    /// `None` means the file did not declare a length — a stream, or a
+    /// fragmented container — and callers must not invent one.
+    pub fn duration_secs(&self) -> Option<f64> {
+        // `probe` guarantees fps > 0, so this cannot divide by zero.
+        self.frame_count.map(|n| n as f64 / self.fps)
+    }
+}
+
+/// Timestamps at which to sample `count` frames from a clip of `duration`.
+///
+/// Samples land on the midpoint of each equal slice rather than at the slice
+/// boundaries, which keeps them off both ends: the first frame of a video is
+/// very often a black lead-in or a fade, and the last is often a fade-out, and
+/// neither says anything about what the clip contains.
+///
+/// With no duration there is nothing to spread across, so it falls back to one
+/// sample per second from the start. Seeking past the end simply yields no
+/// frame, which the sampler reads as end of stream — so an over-long list is
+/// self-limiting rather than an error.
+fn sample_times(duration: Option<f64>, count: usize) -> Vec<f64> {
+    let count = count.max(1);
+    match duration {
+        Some(d) if d > 0.0 => (0..count)
+            .map(|i| d * (i as f64 + 0.5) / count as f64)
+            .collect(),
+        _ => (0..count).map(|i| i as f64).collect(),
+    }
+}
+
+/// Decodes a handful of frames spread across a video, one seek at a time.
+///
+/// This exists for `--dry-run`, which answers "what does the detector fire on"
+/// and writes nothing. Decoding every frame of a two-hour clip to answer that
+/// would cost as much as the real run, so each sample is fetched by its own
+/// ffmpeg invocation with **input seeking** (`-ss` before `-i`), which jumps to
+/// the nearest keyframe instead of decoding everything in between.
+///
+/// The frames are therefore approximate in time. For sampling coverage that is
+/// irrelevant, and it is the difference between a dry run taking seconds and
+/// taking as long as the thing it is supposed to preview.
+///
+/// One process per frame is deliberate: it keeps memory to a single frame no
+/// matter how long the clip or how large the resolution, and a failed seek
+/// cannot poison the samples after it.
+pub struct FfmpegSampler {
+    path: PathBuf,
+    info: VideoInfo,
+    times: Vec<f64>,
+    next: usize,
+    frame_bytes: usize,
+}
+
+impl FfmpegSampler {
+    /// Open `path` and plan `count` samples spread across it.
+    pub fn open(path: &Path, count: usize) -> Result<Self, MediaError> {
+        let info = probe(path)?;
+        let times = sample_times(info.duration_secs(), count);
+        let frame_bytes = info.width as usize * info.height as usize * 3;
+        Ok(Self {
+            path: path.to_path_buf(),
+            info,
+            times,
+            next: 0,
+            frame_bytes,
+        })
+    }
+
+    pub fn info(&self) -> &VideoInfo {
+        &self.info
+    }
+
+    /// How many samples are planned. The run may yield fewer, because seeking
+    /// past the end of a shorter-than-declared clip ends the stream early.
+    pub fn planned(&self) -> usize {
+        self.times.len()
+    }
+}
+
+impl FrameSource for FfmpegSampler {
+    fn next_frame(&mut self) -> Result<Option<Frame>, MediaError> {
+        if self.next >= self.times.len() {
+            return Ok(None);
+        }
+        let t = self.times[self.next];
+        self.next += 1;
+
+        let mut out = tools::command(Tool::Ffmpeg)
+            .args(["-v", "error", "-nostdin"])
+            // Before -i: seek by jumping keyframes, not by decoding to `t`.
+            .args(["-ss", &format!("{t:.3}")])
+            .arg("-i")
+            .arg(&self.path)
+            .args([
+                "-map", "0:v:0", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+            ])
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|e| {
+                MediaError::Video(format!(
+                    "could not spawn ffmpeg to sample {} at {t:.3}s: {e}\n{}",
+                    self.path.display(),
+                    tools::search_description(Tool::Ffmpeg)
+                ))
+            })?;
+
+        // A short read means the seek landed past the end. Because the
+        // timestamps only increase, every later one is past the end too, so
+        // this is end of stream rather than a gap to skip over.
+        if out.stdout.len() < self.frame_bytes {
+            return Ok(None);
+        }
+        out.stdout.truncate(self.frame_bytes);
+        Ok(Some(Frame::new(
+            self.info.width,
+            self.info.height,
+            out.stdout,
+        )?))
+    }
+}
+
 /// Decodes raw RGB frames from a video by piping ffmpeg's `rawvideo` output.
 pub struct FfmpegSource {
     path: PathBuf,
@@ -399,6 +525,52 @@ mod tests {
         assert!((parse_rational("25").unwrap() - 25.0).abs() < 1e-9);
         assert_eq!(parse_rational("0/0"), None);
         assert_eq!(parse_rational("bad"), None);
+    }
+
+    #[test]
+    fn samples_are_spread_across_the_clip_and_avoid_both_ends() {
+        let t = sample_times(Some(10.0), 5);
+        assert_eq!(t.len(), 5);
+        // Midpoints of five equal 2s slices.
+        assert!((t[0] - 1.0).abs() < 1e-9, "{t:?}");
+        assert!((t[4] - 9.0).abs() < 1e-9, "{t:?}");
+        // Never the very first or very last frame: those are usually a fade.
+        assert!(t[0] > 0.0 && *t.last().unwrap() < 10.0);
+        // Strictly increasing, which is what lets a short read mean "the end".
+        assert!(t.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn an_unknown_duration_falls_back_to_one_sample_per_second() {
+        // A stream or fragmented container declares no length. Inventing one
+        // would be worse than sampling the opening and stopping at the end.
+        let t = sample_times(None, 4);
+        assert_eq!(t, vec![0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(sample_times(Some(0.0), 3), vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn a_zero_sample_request_still_yields_one() {
+        // Clamped rather than rejected: a dry run that samples nothing would
+        // report 0 regions, which is the exact bug this sampler exists to fix.
+        assert_eq!(sample_times(Some(10.0), 0).len(), 1);
+    }
+
+    #[test]
+    fn duration_comes_from_frame_count_over_fps() {
+        let info = VideoInfo {
+            width: 8,
+            height: 8,
+            fps: 25.0,
+            frame_count: Some(100),
+            has_audio: false,
+        };
+        assert!((info.duration_secs().unwrap() - 4.0).abs() < 1e-9);
+        let unknown = VideoInfo {
+            frame_count: None,
+            ..info
+        };
+        assert_eq!(unknown.duration_secs(), None);
     }
 
     #[test]
