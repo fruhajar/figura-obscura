@@ -7,7 +7,7 @@
 //!
 //! Resolution order, first hit wins:
 //!
-//! 1. `SB_FFMPEG` / `SB_FFPROBE` — an explicit override, for packagers and for
+//! 1. `OBSCURA_FFMPEG` / `OBSCURA_FFPROBE` — an explicit override, for packagers and for
 //!    anyone who wants a hardware-accelerated build of their own.
 //! 2. The bundle: the executable's own directory, its `bin/` subdirectory, and
 //!    the macOS `.app` layouts (`../Resources/bin`, `../Frameworks`).
@@ -45,8 +45,8 @@ impl Tool {
     /// Environment variable that overrides this tool's location.
     pub fn env_var(self) -> &'static str {
         match self {
-            Tool::Ffmpeg => "SB_FFMPEG",
-            Tool::Ffprobe => "SB_FFPROBE",
+            Tool::Ffmpeg => "OBSCURA_FFMPEG",
+            Tool::Ffprobe => "OBSCURA_FFPROBE",
         }
     }
 }
@@ -284,15 +284,15 @@ mod tests {
         // The override is taken verbatim and is *not* probed for existence: a
         // packager pointing at a path that only exists on the target machine
         // must not be silently ignored in favour of PATH.
-        std::env::set_var("SB_FFMPEG", "/opt/custom/ffmpeg");
+        std::env::set_var("OBSCURA_FFMPEG", "/opt/custom/ffmpeg");
         assert_eq!(resolve(Tool::Ffmpeg), PathBuf::from("/opt/custom/ffmpeg"));
         // An empty value means "unset", not "run the empty string".
-        std::env::set_var("SB_FFMPEG", "");
+        std::env::set_var("OBSCURA_FFMPEG", "");
         assert_eq!(
             resolve(Tool::Ffmpeg),
             PathBuf::from(format!("ffmpeg{EXE_SUFFIX}"))
         );
-        std::env::remove_var("SB_FFMPEG");
+        std::env::remove_var("OBSCURA_FFMPEG");
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn search_description_names_the_env_var_path_and_a_way_to_fix_it() {
         let d = search_description(Tool::Ffmpeg);
-        assert!(d.contains("SB_FFMPEG"));
+        assert!(d.contains("OBSCURA_FFMPEG"));
         assert!(d.contains("PATH"));
         // An error that only says what is missing leaves the user stuck; this
         // one has to carry a command they can run.

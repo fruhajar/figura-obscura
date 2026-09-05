@@ -5,7 +5,7 @@ use crate::pages;
 use crate::theme;
 use egui::RichText;
 use ob_core::registry::human_bytes;
-use ob_media::{classify, MediaKind};
+use ob_media::{classify_resolved, MediaKind};
 use std::path::{Path, PathBuf};
 
 pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
@@ -348,7 +348,7 @@ fn kind_glyph(path: &Path) -> (&'static str, egui::Color32) {
     if path.is_dir() {
         return (glyph::FOLDER, p.accent_hover);
     }
-    match classify(path) {
+    match classify_resolved(path) {
         MediaKind::Image => (glyph::IMAGE, p.text_dim),
         MediaKind::Video => (glyph::VIDEO, p.text_dim),
         // Flagged rather than hidden: a file the batch will skip should be

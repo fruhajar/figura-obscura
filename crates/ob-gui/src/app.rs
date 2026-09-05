@@ -9,12 +9,12 @@
 use crate::downloads::Downloads;
 use crate::prefs::{Prefs, Tab};
 use crate::run::{EstimateJob, PreviewJob, RunHandle, RunState};
-use ob_detect::tile::{TilingConfig, TilingMode};
-use ob_job::estimate::{Calibration, CostModel, ProbedItem, Workload};
 use crate::theme;
 use egui::{CentralPanel, RichText, SidePanel, TopBottomPanel};
 use ob_core::registry::ModelEntry;
 use ob_core::settings::SettingValues;
+use ob_detect::tile::{TilingConfig, TilingMode};
+use ob_job::estimate::{Calibration, CostModel, ProbedItem, Workload};
 use ob_media::tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -51,7 +51,9 @@ fn fingerprint<T: serde::Serialize>(value: &T) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // A value that will not serialise cannot be previewed either; hashing the
     // empty string just means "unchanged", which is the safe direction.
-    serde_json::to_string(value).unwrap_or_default().hash(&mut h);
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .hash(&mut h);
     h.finish()
 }
 
@@ -1040,7 +1042,7 @@ mod tests {
     use crate::prefs::Tab;
     use std::sync::{Mutex, MutexGuard};
 
-    /// `SB_CONFIG_DIR`/`SB_MODEL_DIR` are process-global but tests run in
+    /// `OBSCURA_CONFIG_DIR`/`OBSCURA_MODEL_DIR` are process-global but tests run in
     /// parallel threads, so constructing an app must be serialised or one test
     /// reads another's directories.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1060,8 +1062,8 @@ mod tests {
 
     impl Drop for TestDir {
         fn drop(&mut self) {
-            std::env::remove_var("SB_CONFIG_DIR");
-            std::env::remove_var("SB_MODEL_DIR");
+            std::env::remove_var("OBSCURA_CONFIG_DIR");
+            std::env::remove_var("OBSCURA_MODEL_DIR");
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
@@ -1073,8 +1075,8 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ob-app-test-{name}"));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
-        std::env::set_var("SB_CONFIG_DIR", &path);
-        std::env::set_var("SB_MODEL_DIR", path.join("models"));
+        std::env::set_var("OBSCURA_CONFIG_DIR", &path);
+        std::env::set_var("OBSCURA_MODEL_DIR", path.join("models"));
         let app = ObApp::default();
         (app, TestDir { _lock: lock, path })
     }
@@ -1200,10 +1202,7 @@ mod tests {
         let k = keys(1, 1);
 
         // A change arms the timer rather than firing immediately.
-        assert!(matches!(
-            sched.poll(k, false, t0),
-            PreviewNext::Wait(_)
-        ));
+        assert!(matches!(sched.poll(k, false, t0), PreviewNext::Wait(_)));
         // Still moving: the timer restarts, so a drag never renders mid-drag.
         let k2 = keys(1, 2);
         assert!(matches!(

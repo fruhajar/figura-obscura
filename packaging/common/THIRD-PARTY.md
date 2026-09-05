@@ -31,7 +31,7 @@ an explicit `--allow-gpl`, LGPL passes. Omitting `--ffmpeg` from the staging ste
 selects the first row.
 
 Whichever is chosen, Obscura keeps FFmpeg **separately replaceable** — a user can
-substitute their own build, and `SB_FFMPEG`/`SB_FFPROBE` exist to make that
+substitute their own build, and `OBSCURA_FFMPEG`/`OBSCURA_FFPROBE` exist to make that
 explicit. That is an LGPL requirement and good practice besides.
 
 If you bundle anything, put the matching FFmpeg source tarball (or a link to the

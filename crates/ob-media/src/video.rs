@@ -269,7 +269,15 @@ impl FrameSource for FfmpegSampler {
             .arg("-i")
             .arg(&self.path)
             .args([
-                "-map", "0:v:0", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
             ])
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
@@ -414,6 +422,26 @@ impl FfmpegSink {
             "-",
         ]);
 
+        // GIF is not a codec choice, it is a different encoder entirely: libx264
+        // cannot write one, and a naive `-f gif` produces a 256-colour mess
+        // because ffmpeg falls back to a fixed palette. palettegen/paletteuse
+        // over a `split` builds a palette from this clip's own colours in a
+        // single pass, which matters here — censor boxes are flat blocks of one
+        // colour and a generic palette bands them visibly.
+        if is_gif(output) {
+            cmd.args([
+                "-filter_complex",
+                "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer",
+                // 0 = loop forever, matching how animated GIFs are normally authored.
+                "-loop",
+                "0",
+                "-f",
+                "gif",
+            ]);
+            cmd.arg(output);
+            return Self::spawn(cmd, output, info);
+        }
+
         let want_audio = opts.copy_audio && info.has_audio;
         // Input 1 (only when needed): the original file, for its audio stream.
         if want_audio {
@@ -444,6 +472,16 @@ impl FfmpegSink {
         }
         cmd.arg(output);
 
+        Self::spawn(cmd, output, info)
+    }
+
+    /// Start the configured encoder and take its stdin. Shared by the GIF and
+    /// the ordinary video paths so both get identical process handling.
+    fn spawn(
+        mut cmd: std::process::Command,
+        output: &Path,
+        info: &VideoInfo,
+    ) -> Result<Self, MediaError> {
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -463,6 +501,13 @@ impl FfmpegSink {
             frame_bytes: info.width as usize * info.height as usize * 3,
         })
     }
+}
+
+/// Whether `path` names a GIF, which needs its own encoder configuration.
+fn is_gif(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("gif"))
 }
 
 impl Drop for FfmpegSink {

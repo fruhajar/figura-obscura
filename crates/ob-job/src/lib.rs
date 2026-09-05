@@ -10,7 +10,6 @@ pub mod estimate;
 pub mod expand;
 
 use expand::{output_path, InputSpec, MediaItem};
-use rayon::prelude::*;
 use ob_censor::apply as apply_censor;
 use ob_core::cancel::CancelToken;
 use ob_core::geometry::{Detection, Frame};
@@ -19,6 +18,7 @@ use ob_detect::Detector;
 use ob_media::video::{FfmpegSampler, FfmpegSink, FfmpegSource, VideoEncodeOpts};
 use ob_media::{classify, load_image, save_image, FrameSink, FrameSource, MediaKind};
 use ob_track::{TrackConfig, Tracker};
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -274,11 +274,7 @@ fn process_image(
 /// it exists to let the tracker coast between neighbouring frames, and these
 /// samples are seconds apart. For the same reason no tracker is used — there is
 /// no continuity between the samples to smooth.
-fn sample_video(
-    input: &Path,
-    cfg: &JobConfig,
-    detector: &dyn Detector,
-) -> Result<usize, JobError> {
+fn sample_video(input: &Path, cfg: &JobConfig, detector: &dyn Detector) -> Result<usize, JobError> {
     let mut source = FfmpegSampler::open(input, cfg.dry_run_frames)?;
     let mut total = 0usize;
     while let Some(mut frame) = source.next_frame()? {
@@ -401,6 +397,10 @@ pub struct PreviewSource {
 
 /// Decode the first frame of `input` and run the detector over it.
 pub fn preview_detect(input: &Path, detector: &dyn Detector) -> Result<PreviewSource, JobError> {
+    // Deliberately the cheap extension-only classifier, not `classify_resolved`.
+    // A preview only ever shows one frame, and `load_image` reads the first
+    // frame of an animated GIF without needing ffmpeg installed — so previewing
+    // a GIF keeps working on a machine that can only do stills.
     let frame = match classify(input) {
         MediaKind::Image => load_image(input)?,
         MediaKind::Video => {
@@ -854,6 +854,59 @@ mod tests {
         assert_eq!(summary.ok, 1);
         assert_eq!(summary.failed, 0);
         assert!(!out.join("clip.mp4").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_animated_gif_survives_as_an_animation() {
+        // The regression: a GIF was classified as a still, so the batch decoded
+        // frame 1, censored it, and wrote a one-frame GIF back — every other
+        // frame silently discarded. It must round-trip as an animation.
+        if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        }
+        let dir = std::env::temp_dir().join("ob-job-test-gif-anim");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("a.gif");
+        let ok = ob_media::tools::command(ob_media::tools::Tool::Ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=1:size=64x48:rate=8")
+            .arg(&src)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !ok {
+            let _ = std::fs::remove_dir_all(&dir);
+            eprintln!("skipped: could not author a test gif");
+            return;
+        }
+        // Precondition: the source really is an animation.
+        assert_eq!(
+            ob_media::classify_resolved(&src),
+            ob_media::MediaKind::Video
+        );
+
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &src, &out);
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.failed, 0, "the gif failed to process");
+        assert_eq!(summary.ok, 1);
+
+        let written = out.join("a.gif");
+        assert!(written.exists(), "no output gif written");
+        // The point of the test: still more than one frame.
+        assert_eq!(
+            ob_media::classify_resolved(&written),
+            ob_media::MediaKind::Video,
+            "the output gif was flattened to a single frame"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

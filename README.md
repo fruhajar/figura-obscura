@@ -21,6 +21,107 @@ downloaded once, up front.
 > To ship: [`RELEASING.md`](RELEASING.md). To build on a host:
 > [`HOST-BUILD.md`](HOST-BUILD.md).
 
+## Quickstart
+
+> **No release has been published yet.** The installers below are built by the
+> scripts in `packaging/`, and the download links will only work once a release
+> exists. Until then, [build one yourself](#build-the-installer-yourself) — or
+> just [build from source](#build-from-source), which needs no installer at all.
+
+### Install
+
+**Windows.** Download `FiguraObscura-<version>-windows-x64-setup.exe` from
+[Releases](../../releases) and run it. It installs to Program Files, adds a Start
+menu entry, offers a tickbox to put `obscura.exe` on your `PATH`, and downloads
+the detection models on its final page. Nothing else to do.
+
+The installer is unsigned, so SmartScreen will show a warning — *More info →
+Run anyway*.
+
+**Linux.** Download `FiguraObscura-<version>-linux-x86_64.tar.gz`, then:
+
+```sh
+tar -xzf FiguraObscura-*-linux-x86_64.tar.gz
+cd FiguraObscura-*-linux-x86_64
+./install.sh
+```
+
+That installs into `~/.local` — no root, no package manager — registers the
+desktop entry and icons so the app appears in your menu, and downloads the
+models. Useful variants:
+
+```sh
+./install.sh --prefix /usr/local   # system-wide (needs sudo)
+./install.sh --no-models           # skip the download; fetch later with `obscura setup`
+./install.sh --uninstall           # remove it again
+```
+
+Uninstalling deliberately leaves your models and settings alone; it tells you
+where they are so you can delete them yourself if you want to.
+
+If `~/.local/bin` isn't on your `PATH`, the installer says so and prints the
+line to add. There is also an `.AppImage` if you would rather have a single
+file: `chmod +x` it and run it.
+
+**macOS.** Open the `.dmg` and drag **Figura Obscura** to Applications. The app
+is not notarised, so the first launch needs *right-click → Open* rather than a
+double-click. The CLI lives inside the bundle at
+`/Applications/Figura Obscura.app/Contents/MacOS/obscura`; symlink it onto your
+`PATH` if you want it.
+
+### First run
+
+The installers already do this. If you skipped it, or you built from source:
+
+```sh
+obscura setup
+```
+
+One command to get a fresh machine working: it downloads the recommended models
+(~56 MB), prints each file's SHA-256, and checks that ffmpeg is runnable. It is
+idempotent, so running it twice is harmless.
+
+### Use it
+
+```sh
+obscura-gui                                # the desktop app
+obscura process ./photos -o ./censored     # the same thing, batched
+obscura --help
+```
+
+Other useful commands:
+
+```sh
+obscura models list                    # what is installed, and how big the rest are
+obscura models show nudenet-320n       # every setting, with the text the GUI tooltips use
+obscura models path                    # where the cache lives
+obscura process ./in -o ./out --no-auto-fetch   # fail rather than download, in a script
+```
+
+`obscura process` downloads a missing model by default and says so first. Ctrl-C
+stops it between files, so a cancelled run never leaves a truncated video behind.
+
+### Build from source
+
+Needs Rust and, for video, ffmpeg on your `PATH`.
+
+```sh
+cargo build --release
+./target/release/obscura setup
+./target/release/obscura-gui
+```
+
+This is the shortest path to a working copy, but it leaves the binaries in
+`target/` — nothing is on your `PATH` and there is no menu entry. Use an
+installer for that.
+
+### Build the installer yourself
+
+One script per platform, each run on its own OS, all wrapping the same staged
+tree — see [Packaging](#packaging) for the commands. Windows additionally needs
+[Inno Setup 6](https://jrsoftware.org/isinfo.php). The full release procedure is
+in [`RELEASING.md`](RELEASING.md).
+
 ## Architecture
 
 A Cargo workspace of small crates. The invariant everywhere is a pure
@@ -39,32 +140,6 @@ screen tool (`ob-screen`) can reuse everything but the I/O ends.
 | `ob-cli` | `obscura` binary. |
 | `obscura-gui` | `obscura-gui` desktop app (egui/eframe); tooltips sourced from `ob-core`. |
 | `xtask` | Build-time asset generation (`cargo xtask icons`). Not shipped. |
-
-## Quick start (on a host with Rust + ffmpeg)
-
-```sh
-cargo build --release
-./target/release/obscura setup                               # download the default models
-./target/release/obscura process ./photos -o ./censored
-./target/release/obscura-gui                                 # the desktop app
-```
-
-`obscura setup` is the one command a fresh machine needs: it downloads the recommended
-models, prints each file's SHA-256 (paste those into the registry to pin them),
-and checks that ffmpeg is runnable. It is idempotent, and it is what the
-installers run after copying files.
-
-Other useful commands:
-
-```sh
-obscura models list                     # what is installed, and how big the rest are
-obscura models show nudenet-320n        # every setting, with the same text the GUI tooltips use
-obscura models path                     # where the cache lives
-obscura process ./in -o ./out --no-auto-fetch   # fail rather than download in a script
-```
-
-`obscura process` downloads a missing model by default and says so first. Ctrl-C stops
-it between files, so a cancelled run never leaves a truncated video behind.
 
 ## The desktop app
 
@@ -91,7 +166,7 @@ it between files, so a cancelled run never leaves a truncated video behind.
 - **Models** installs, re-downloads and removes weights, with per-model progress,
   cancel, and the licence and source of each.
 - Settings persist to `~/.config/figura-obscura/settings.json`; models to
-  `~/.cache/figura-obscura/models` (`SB_MODEL_DIR` overrides).
+  `~/.cache/figura-obscura/models` (`OBSCURA_MODEL_DIR` overrides).
 
 ### Estimating a run
 
@@ -143,7 +218,7 @@ See [`packaging/common/THIRD-PARTY.md`](packaging/common/THIRD-PARTY.md).
 
 The app finds its bundled ffmpeg next to the executable (`bin/`,
 `Contents/Resources/bin`, `../lib/figura-obscura`) before falling back to `PATH`, so
-a customer never has to install it. `SB_FFMPEG`/`SB_FFPROBE` override.
+a customer never has to install it. `OBSCURA_FFMPEG`/`OBSCURA_FFPROBE` override.
 
 ## Detector coverage & limits
 
