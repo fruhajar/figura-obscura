@@ -43,7 +43,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\assets\figura-obscura.ico
 UninstallDisplayIcon={app}\{#AppExeName}
-LicenseFile=..\common\THIRD-PARTY.md
+; The wizard's licence page is what the user accepts, so it must be the
+; product's own licence. THIRD-PARTY.md is installed alongside it as a
+; notice, not as terms to agree to.
+LicenseFile=..\..\LICENSE
 ; The app writes only to its own per-user config and cache directories.
 UsedUserAreasWarning=no
 
@@ -61,6 +64,7 @@ Source: "{#StageDir}\obscura.exe";      DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\bin\*";       DestDir: "{app}\bin"; Flags: ignoreversion skipifsourcedoesntexist
 ; GPU execution providers, present only in a CUDA build.
 Source: "{#StageDir}\onnxruntime_providers_*"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#StageDir}\LICENSE";        DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\README.md";      DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\licenses\*";     DestDir: "{app}\licenses"; Flags: ignoreversion skipifsourcedoesntexist recursesubdirs

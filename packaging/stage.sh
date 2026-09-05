@@ -146,6 +146,10 @@ cp "$repo_root/packaging/common/THIRD-PARTY.md" "$stage/"
 cp -r "$repo_root/packaging/common/licenses/." "$stage/licenses/" 2>/dev/null || true
 cp "$repo_root/packaging/assets/"*.png "$stage/assets/" 2>/dev/null || true
 cp "$repo_root/README.md" "$stage/README.md"
+# The product's own licence. THIRD-PARTY.md covers what we redistribute;
+# this covers what we wrote, and shipping binaries without it grants the
+# recipient nothing.
+cp "$repo_root/LICENSE" "$stage/LICENSE"
 
 # --- 5. verify --------------------------------------------------------------
 # Catch a broken stage now rather than in a customer's installer.

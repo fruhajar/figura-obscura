@@ -92,7 +92,7 @@ for size in 16 32 48 64 128 256 512; do
         install -m 0644 "$src" "$icondir/${size}x${size}/apps/figura-obscura.png"
     fi
 done
-for doc in THIRD-PARTY.md README.md; do
+for doc in LICENSE THIRD-PARTY.md README.md; do
     [[ -f "$here/$doc" ]] && install -m 0644 "$here/$doc" "$docdir/$doc"
 done
 [[ -d "$here/licenses" ]] && cp -r "$here/licenses" "$docdir/"
