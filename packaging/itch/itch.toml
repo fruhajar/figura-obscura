@@ -1,0 +1,27 @@
+# itch.io app manifest.
+#
+# Copy this to the root of each uploaded build as `.itch.toml`. It tells the
+# itch app which binary to launch, so a customer who installs through the app
+# gets a working Play button instead of a file listing.
+#
+# https://itch.io/docs/itch/integrating/manifest.html
+
+[[actions]]
+name = "play"
+path = "obscura-gui"
+[actions.locales.en]
+name = "Launch Figura Obscura"
+
+[[actions]]
+name = "setup"
+path = "obscura"
+args = ["setup"]
+console = true
+[actions.locales.en]
+name = "Download detection models"
+
+[[actions]]
+name = "manual"
+path = "README.md"
+[actions.locales.en]
+name = "Read the manual"

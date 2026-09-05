@@ -1,0 +1,26 @@
+[package]
+name = "ob-detect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura inference: ort-based detectors, letterbox/NMS, native-label mapping, execution-provider selection."
+
+[dependencies]
+ob-core = { workspace = true }
+ort = { workspace = true }
+ndarray = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+# CPU is always available (ort default). GPU EPs are opt-in to keep the default
+# binary small (plan §4). Enable per target on the host.
+default = []
+cuda = ["ort/cuda"]
+rocm = ["ort/rocm"]
+# Vendor-neutral GPU path. Unlike rocm, this one HAS a prebuilt ONNX Runtime
+# binary for linux-x86_64, so it works without building ORT from source.
+webgpu = ["ort/webgpu"]
+directml = ["ort/directml"]
+coreml = ["ort/coreml"]

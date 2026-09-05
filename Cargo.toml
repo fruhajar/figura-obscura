@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ob-core",
+    "crates/ob-detect",
+    "crates/ob-censor",
+    "crates/ob-track",
+    "crates/ob-media",
+    "crates/ob-job",
+    "crates/ob-models",
+    "crates/ob-cli",
+    "crates/ob-gui",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.79"
+license = "PolyForm-Noncommercial-1.0.0"
+authors = ["Figura Obscura"]
+# Nothing here is meant for crates.io: the license reserves commercial
+# rights, and these are internal crates of one application, not libraries.
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+ob-core = { path = "crates/ob-core" }
+ob-detect = { path = "crates/ob-detect" }
+ob-censor = { path = "crates/ob-censor" }
+ob-track = { path = "crates/ob-track" }
+ob-media = { path = "crates/ob-media" }
+ob-job = { path = "crates/ob-job" }
+ob-models = { path = "crates/ob-models" }
+
+# Shared third-party
+thiserror = "1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+rayon = "1.10"
+# ONNX Runtime bindings — pinned rc (2.0 API not yet frozen). See plan Risks.
+# Default features keep ort's binary-linking strategy so the first host build
+# works; GPU execution providers are added per-crate via feature flags.
+ort = "=2.0.0-rc.10"
+ndarray = "0.16"
+
+# --- Release profile: opaque, small native binary (R9) ---
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

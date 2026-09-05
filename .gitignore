@@ -1,0 +1,20 @@
+# Build output. Everything the packaging scripts emit lands under here too —
+# stage/, dist/, installer/, screenshots/, the *.AppDir, the .app, and the
+# cached appimagetool — so this one line covers all of it.
+/target
+
+# Rust
+**/*.rs.bk
+Cargo.lock.orig
+
+# Detector weights. These live in the OS cache dir, never in-repo: they are tens
+# of megabytes, and several carry licences that forbid us redistributing them.
+/models
+*.onnx
+
+# Editor and OS noise. macOS earns its place here — the .app and .dmg are built
+# on a Mac, and Finder salts .DS_Store into every directory it opens.
+.DS_Store
+.idea/
+.vscode/
+*.swp

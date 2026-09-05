@@ -1,0 +1,13 @@
+[package]
+name = "ob-censor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura censor renderers: solid fill, pixelate, blur, preset-image overlay over bounding boxes."
+
+[dependencies]
+ob-core = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }

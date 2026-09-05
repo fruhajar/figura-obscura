@@ -1,0 +1,11 @@
+[package]
+name = "ob-track"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura temporal smoothing: IoU tracker + hysteresis to prevent censor flicker in video and real-time."
+
+[dependencies]
+ob-core = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "ob-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura model manager: the ONLY networked crate. One-time download, checksum verification, local cache."
+
+[dependencies]
+ob-core = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+dirs = "5"
+# Minimal blocking HTTP with rustls; used ONLY by `fetch`. All processing paths
+# are network-free (requirement R8).
+ureq = { version = "2", default-features = false, features = ["tls"] }

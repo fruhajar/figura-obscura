@@ -1,0 +1,20 @@
+[package]
+name = "ob-job"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura job engine: input expansion, worker pool, progress/cancel, per-file error isolation, the batch pipeline."
+
+[dependencies]
+ob-core = { workspace = true }
+ob-detect = { workspace = true }
+ob-censor = { workspace = true }
+ob-media = { workspace = true }
+ob-track = { workspace = true }
+image = { workspace = true }
+rayon = { workspace = true }
+walkdir = "2"
+globset = "0.4"
+thiserror = { workspace = true }

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Figura Obscura
+GenericName=Batch Image Censor
+Comment=Offline batch censoring for images and video
+Exec=obscura-gui
+Icon=figura-obscura
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=censor;batch;images;video;privacy;
+StartupNotify=true
+StartupWMClass=figura-obscura

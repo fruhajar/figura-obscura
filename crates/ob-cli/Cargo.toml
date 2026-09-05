@@ -1,0 +1,24 @@
+[package]
+name = "ob-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Figura Obscura CLI (`obscura`)."
+
+[[bin]]
+name = "obscura"
+path = "src/main.rs"
+
+[dependencies]
+ob-core = { workspace = true }
+ob-detect = { workspace = true }
+ob-job = { workspace = true }
+ob-models = { workspace = true }
+ob-media = { workspace = true }
+ob-track = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+ctrlc = "3"
