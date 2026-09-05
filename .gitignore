@@ -18,3 +18,7 @@ Cargo.lock.orig
 .idea/
 .vscode/
 *.swp
+
+# Local sample media for testing. Never committed: it is large, and it is
+# whatever the developer happened to be testing against.
+/demo
