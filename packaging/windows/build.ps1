@@ -11,7 +11,13 @@
     a Windows binary anyway.
 
 .PARAMETER FfmpegDir
-    Directory containing ffmpeg.exe and ffprobe.exe. Must be an LGPL build —
+    Optional. Directory containing ffmpeg.exe and ffprobe.exe. Omit it to ship
+    without a bundled ffmpeg: the app then finds the user's own on PATH, and the
+    build carries no redistribution obligations at all. Images work either way;
+    only video needs it. This mirrors packaging/stage.sh, where omitting
+    --ffmpeg is likewise supported.
+
+    When given, it must be an LGPL build —
     a GPL build would place all of Figura Obscura under the GPL. Get one from
     https://github.com/BtbN/FFmpeg-Builds (choose an asset with "lgpl" in the
     name, e.g. ffmpeg-n7.1-latest-win64-lgpl-shared-7.1.zip).
@@ -26,7 +32,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$FfmpegDir,
+    [string]$FfmpegDir = '',
     [ValidateSet('none', 'cuda')][string]$Gpu = 'none',
     [string]$InnoSetup = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 )
@@ -44,25 +50,32 @@ function Assert-Tool($path, $what, $hint) {
 # --- 0. preflight -----------------------------------------------------------
 Assert-Tool $InnoSetup 'Inno Setup (ISCC.exe)' `
     'Install it from https://jrsoftware.org/isdl.php, or pass -InnoSetup <path>.'
-foreach ($tool in 'ffmpeg.exe', 'ffprobe.exe') {
-    Assert-Tool (Join-Path $FfmpegDir $tool) $tool `
-        'Point -FfmpegDir at the bin\ directory of an LGPL FFmpeg build.'
-}
+$bundleFfmpeg = -not [string]::IsNullOrWhiteSpace($FfmpegDir)
+if ($bundleFfmpeg) {
+    foreach ($tool in 'ffmpeg.exe', 'ffprobe.exe') {
+        Assert-Tool (Join-Path $FfmpegDir $tool) $tool `
+            'Point -FfmpegDir at the bin\ directory of an LGPL FFmpeg build.'
+    }
 
-# Refuse a GPL/nonfree ffmpeg. Same rule the Unix staging script enforces; it is
-# reimplemented here because the shell script needs bash, which Windows lacks.
-$banner = & (Join-Path $FfmpegDir 'ffmpeg.exe') -hide_banner -version 2>&1 | Out-String
-if ($banner -match '--enable-nonfree') {
-    throw 'That FFmpeg is a --enable-nonfree build and cannot be redistributed at all.'
-}
-if ($banner -match '--enable-gpl') {
-    throw @'
+    # Refuse a GPL/nonfree ffmpeg. Same rule the Unix staging script enforces; it
+    # is reimplemented here because the shell script needs bash, which Windows
+    # lacks.
+    $banner = & (Join-Path $FfmpegDir 'ffmpeg.exe') -hide_banner -version 2>&1 | Out-String
+    if ($banner -match '--enable-nonfree') {
+        throw 'That FFmpeg is a --enable-nonfree build and cannot be redistributed at all.'
+    }
+    if ($banner -match '--enable-gpl') {
+        throw @'
 That FFmpeg is a --enable-gpl build. Bundling it would place all of Figura Obscura
 under the GPL. Download an "lgpl" asset from https://github.com/BtbN/FFmpeg-Builds
 instead.
 '@
+    }
+    Write-Host "==> FFmpeg licence OK: $(($banner -split "`n")[0].Trim())"
+} else {
+    Write-Host '==> no -FfmpegDir given: shipping without a bundled ffmpeg.'
+    Write-Host '    Video will require the user to have ffmpeg on PATH; images are unaffected.'
 }
-Write-Host "==> FFmpeg licence OK: $(($banner -split "`n")[0].Trim())"
 
 # --- 1. version -------------------------------------------------------------
 # Read it from the workspace manifest so the installer filename, the wizard and
@@ -91,12 +104,14 @@ try {
 
     Copy-Item "target\release\obscura.exe"     $stage
     Copy-Item "target\release\obscura-gui.exe" $stage
-    Copy-Item (Join-Path $FfmpegDir 'ffmpeg.exe')  "$stage\bin"
-    Copy-Item (Join-Path $FfmpegDir 'ffprobe.exe') "$stage\bin"
+    if ($bundleFfmpeg) {
+        Copy-Item (Join-Path $FfmpegDir 'ffmpeg.exe')  "$stage\bin"
+        Copy-Item (Join-Path $FfmpegDir 'ffprobe.exe') "$stage\bin"
 
-    # An LGPL shared build needs its DLLs beside the executables.
-    Get-ChildItem $FfmpegDir -Filter *.dll -ErrorAction SilentlyContinue |
-        ForEach-Object { Copy-Item $_.FullName "$stage\bin" }
+        # An LGPL shared build needs its DLLs beside the executables.
+        Get-ChildItem $FfmpegDir -Filter *.dll -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName "$stage\bin" }
+    }
 
     # GPU execution providers exist only in a CUDA build; the CPU runtime is
     # statically linked, so there is nothing to copy for -Gpu none.
@@ -113,8 +128,10 @@ try {
     Write-Host '==> verifying staged binaries'
     & "$stage\obscura.exe" models list | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'staged obscura.exe does not run' }
-    & "$stage\bin\ffmpeg.exe" -hide_banner -version | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'staged ffmpeg.exe does not run' }
+    if ($bundleFfmpeg) {
+        & "$stage\bin\ffmpeg.exe" -hide_banner -version | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'staged ffmpeg.exe does not run' }
+    }
 
     # --- 5. installer -------------------------------------------------------
     Write-Host '==> compiling the installer'

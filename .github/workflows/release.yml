@@ -1,0 +1,138 @@
+name: Release
+
+# Tag-driven. `git tag v0.1.0 && git push origin v0.1.0` builds every platform
+# and opens a DRAFT release with the artifacts attached; publishing is a manual
+# click. Draft rather than live on purpose — an unsigned installer and a licence
+# file both deserve a look before anyone can download them.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fail before spending three runners on a mismatch: the installer filenames,
+  # the Inno wizard and the binaries all take their version from Cargo.toml, so
+  # a tag that disagrees with it produces artifacts named after a version that
+  # does not exist.
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - id: v
+        run: |
+          version=$(awk '/^\[workspace\.package\]/{f=1} f && /^version/{gsub(/[",]/,"");print $3; exit}' Cargo.toml)
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "v$version" != "$tag" ]; then
+            echo "::error::tag $tag does not match [workspace.package] version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "building $tag (Cargo version $version)"
+
+  build:
+    needs: check-version
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not deny you the artifacts for the others.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            artifacts: target/dist/*
+          - os: windows-latest
+            name: windows
+            artifacts: target/installer/*.exe
+          - os: macos-latest
+            name: macos
+            artifacts: target/dist/*.dmg
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.os }}
+
+      # eframe links X11/Wayland and GL on Linux only; the other two use their
+      # platform toolkits.
+      - name: Install Linux GUI dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libssl-dev
+
+      - name: Install Inno Setup
+        if: matrix.name == 'windows'
+        run: choco install innosetup -y --no-progress
+
+      # No --ffmpeg on any platform: bundling one obliges shipping its licence
+      # text and offering corresponding source, and not bundling carries no
+      # obligation at all. The app finds a user-installed ffmpeg on PATH and
+      # says how to get one when it cannot. Images never need it.
+      - name: Build Linux artifacts
+        if: matrix.name == 'linux'
+        # appimagetool needs FUSE, which GitHub runners lack; this is the
+        # documented way to run an AppImage without it.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: packaging/linux/build.sh
+
+      - name: Build Windows installer
+        if: matrix.name == 'windows'
+        run: packaging\windows\build.ps1
+        shell: pwsh
+
+      - name: Build macOS disk image
+        if: matrix.name == 'macos'
+        run: packaging/macos/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be attached
+        run: ls -lh artifacts/
+
+      # `gh` ships on the runner, so this needs no third-party action.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$tag" artifacts/* \
+            --draft \
+            --title "Figura Obscura ${{ needs.check-version.outputs.version }}" \
+            --notes-file .github/release-notes.md
