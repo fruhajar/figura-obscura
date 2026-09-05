@@ -16,11 +16,18 @@ use ob_core::cancel::CancelToken;
 use ob_core::geometry::{Detection, Frame};
 use ob_core::profile::{OnDetectFailure, Profile};
 use ob_detect::Detector;
-use ob_media::video::{FfmpegSink, FfmpegSource, VideoEncodeOpts};
+use ob_media::video::{FfmpegSampler, FfmpegSink, FfmpegSource, VideoEncodeOpts};
 use ob_media::{classify, load_image, save_image, FrameSink, FrameSource, MediaKind};
 use ob_track::{TrackConfig, Tracker};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Frames a dry run samples from each video by default.
+///
+/// Twelve is a compromise: enough that a clip with any censorable content in it
+/// is very unlikely to show zero, few enough that dry-running a folder of
+/// videos stays a matter of seconds. `--dry-run-frames` overrides it.
+pub const DEFAULT_DRY_RUN_FRAMES: usize = 12;
 
 /// Everything a run needs besides the detector (which the caller builds from the
 /// chosen model + `ob-models` cache path).
@@ -30,6 +37,8 @@ pub struct JobConfig<'a> {
     pub output_dir: PathBuf,
     /// Log what would happen without writing any output.
     pub dry_run: bool,
+    /// Video: how many frames a dry run samples per clip. Ignored otherwise.
+    pub dry_run_frames: usize,
     /// Video: run the detector every Nth frame; the tracker coasts between.
     pub detect_every: u32,
     pub track: TrackConfig,
@@ -253,6 +262,37 @@ fn process_image(
     Ok(regions)
 }
 
+/// A dry run over a video: detect on a sample of frames, write nothing.
+///
+/// This used to open the file, confirm it was readable and return 0. That was
+/// not merely uninformative — `--dry-run` feeds `--report` and the miss
+/// summary, so every clip landed in the "had none" column and dragged the
+/// reported miss rate down. A folder of videos could look like a detector
+/// failure when no inference had ever run.
+///
+/// Detection happens on every sampled frame, so `detect_every` does not apply:
+/// it exists to let the tracker coast between neighbouring frames, and these
+/// samples are seconds apart. For the same reason no tracker is used — there is
+/// no continuity between the samples to smooth.
+fn sample_video(
+    input: &Path,
+    cfg: &JobConfig,
+    detector: &dyn Detector,
+) -> Result<usize, JobError> {
+    let mut source = FfmpegSampler::open(input, cfg.dry_run_frames)?;
+    let mut total = 0usize;
+    while let Some(mut frame) = source.next_frame()? {
+        // Sampling a long clip is not instant, so honour cancellation here too.
+        if cfg.cancel.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        // The same call the batch and the preview make, so a dry run answers
+        // `on_detect_failure` exactly the way the real run will.
+        total += censor_frame(&mut frame, detector, cfg.profile)?;
+    }
+    Ok(total)
+}
+
 fn process_video(
     input: &Path,
     output: &Path,
@@ -260,9 +300,7 @@ fn process_video(
     detector: &dyn Detector,
 ) -> Result<usize, JobError> {
     if cfg.dry_run {
-        // Nothing written; just confirm the file is openable.
-        let _ = FfmpegSource::open(input)?;
-        return Ok(0);
+        return sample_video(input, cfg, detector);
     }
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -649,6 +687,7 @@ mod tests {
             },
             output_dir: out.to_path_buf(),
             dry_run: false,
+            dry_run_frames: DEFAULT_DRY_RUN_FRAMES,
             detect_every: 1,
             track: TrackConfig::default(),
             video_opts: VideoEncodeOpts::default(),
@@ -725,6 +764,96 @@ mod tests {
             cancelled < finished,
             "Cancelled must precede Finished: {seen:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Render a short test clip with ffmpeg. `None` if ffmpeg is unavailable.
+    fn a_test_clip(name: &str) -> Option<PathBuf> {
+        if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {
+            return None;
+        }
+        let dir = std::env::temp_dir().join(format!("ob-job-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4");
+        let ok = ob_media::tools::command(ob_media::tools::Tool::Ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=2:size=64x48:rate=10")
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&path)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if ok {
+            Some(path)
+        } else {
+            let _ = std::fs::remove_dir_all(&dir);
+            None
+        }
+    }
+
+    #[test]
+    fn a_dry_run_over_a_video_actually_detects() {
+        // The regression this guards: `--dry-run` used to open a video, confirm
+        // it was readable and report 0 regions. Because dry-run output feeds
+        // --report and the miss summary, every clip counted as "had none" and
+        // pushed the reported miss rate down — a folder of videos looked like a
+        // broken detector when nothing had been inferred at all.
+        let Some(clip) = a_test_clip("dryrun-video") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let mut cfg = job_cfg(&profile, &clip, &out);
+        cfg.dry_run = true;
+        cfg.dry_run_frames = 4;
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+
+        let seen = std::sync::Mutex::new(Vec::new());
+        let summary = run(&cfg, &d, &|ev| {
+            if let ProgressEvent::FileDone { regions, .. } = ev {
+                seen.lock().unwrap().push(regions);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(summary.ok, 1);
+        let regions = seen.into_inner().unwrap();
+        // One detection per sampled frame, four frames sampled.
+        assert_eq!(regions, vec![4], "a dry run must report what it saw");
+        // And it is still a dry run: nothing was written.
+        assert!(
+            !out.exists() || std::fs::read_dir(&out).unwrap().count() == 0,
+            "dry run wrote output"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dry_run_never_writes_a_video() {
+        // Guards the other half: the sampler must not be wired to the encoder.
+        let Some(clip) = a_test_clip("dryrun-nowrite") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let mut cfg = job_cfg(&profile, &clip, &out);
+        cfg.dry_run = true;
+        let d = FakeDetector {
+            dets: vec![],
+            fail: false,
+        };
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.ok, 1);
+        assert_eq!(summary.failed, 0);
+        assert!(!out.join("clip.mp4").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

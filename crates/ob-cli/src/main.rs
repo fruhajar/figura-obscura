@@ -87,6 +87,10 @@ struct ProcessArgs {
     /// List what would happen without writing output.
     #[arg(long)]
     dry_run: bool,
+    /// Dry run: frames to sample from each video, spread across it. Stills are
+    /// always detected whole. Raise it to audit a clip more thoroughly.
+    #[arg(long, value_name = "N", default_value_t = ob_job::DEFAULT_DRY_RUN_FRAMES)]
+    dry_run_frames: usize,
     /// Video: detect every Nth frame (tracker coasts between).
     #[arg(long, default_value_t = 3)]
     detect_every: u32,
@@ -401,6 +405,7 @@ fn cmd_process(args: ProcessArgs) -> Result<()> {
         },
         output_dir: args.output,
         dry_run: args.dry_run,
+        dry_run_frames: args.dry_run_frames,
         detect_every: args.detect_every,
         track: TrackConfig::default(),
         video_opts: VideoEncodeOpts::default(),
