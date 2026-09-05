@@ -1042,7 +1042,7 @@ mod tests {
     use crate::prefs::Tab;
     use std::sync::{Mutex, MutexGuard};
 
-    /// `SB_CONFIG_DIR`/`SB_MODEL_DIR` are process-global but tests run in
+    /// `OBSCURA_CONFIG_DIR`/`OBSCURA_MODEL_DIR` are process-global but tests run in
     /// parallel threads, so constructing an app must be serialised or one test
     /// reads another's directories.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1062,8 +1062,8 @@ mod tests {
 
     impl Drop for TestDir {
         fn drop(&mut self) {
-            std::env::remove_var("SB_CONFIG_DIR");
-            std::env::remove_var("SB_MODEL_DIR");
+            std::env::remove_var("OBSCURA_CONFIG_DIR");
+            std::env::remove_var("OBSCURA_MODEL_DIR");
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
@@ -1075,8 +1075,8 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ob-app-test-{name}"));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
-        std::env::set_var("SB_CONFIG_DIR", &path);
-        std::env::set_var("SB_MODEL_DIR", path.join("models"));
+        std::env::set_var("OBSCURA_CONFIG_DIR", &path);
+        std::env::set_var("OBSCURA_MODEL_DIR", path.join("models"));
         let app = ObApp::default();
         (app, TestDir { _lock: lock, path })
     }

@@ -58,9 +58,9 @@ impl ModelError {
 }
 
 /// Root cache directory for Obscura models, e.g. `~/.cache/figura-obscura/models`.
-/// Overridable via `SB_MODEL_DIR`.
+/// Overridable via `OBSCURA_MODEL_DIR`.
 pub fn cache_dir() -> Result<PathBuf, ModelError> {
-    if let Ok(dir) = std::env::var("SB_MODEL_DIR") {
+    if let Ok(dir) = std::env::var("OBSCURA_MODEL_DIR") {
         return Ok(PathBuf::from(dir));
     }
     let base = dirs::cache_dir().ok_or(ModelError::NoCacheDir)?;
@@ -526,7 +526,7 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, MutexGuard};
 
-    /// `SB_MODEL_DIR` is process-global, but Rust runs tests in parallel
+    /// `OBSCURA_MODEL_DIR` is process-global, but Rust runs tests in parallel
     /// threads. Any test that sets it must hold this lock, or it will observe
     /// (and clobber) another test's cache directory.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -543,14 +543,14 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("ob-models-test-{name}"));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
-            std::env::set_var("SB_MODEL_DIR", &dir);
+            std::env::set_var("OBSCURA_MODEL_DIR", &dir);
             Self { _lock: lock, dir }
         }
     }
 
     impl Drop for CacheGuard {
         fn drop(&mut self) {
-            std::env::remove_var("SB_MODEL_DIR");
+            std::env::remove_var("OBSCURA_MODEL_DIR");
             let _ = fs::remove_dir_all(&self.dir);
         }
     }
@@ -572,9 +572,9 @@ mod tests {
     #[test]
     fn cache_dir_respects_env_override() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("SB_MODEL_DIR", "/tmp/ob-models-test");
+        std::env::set_var("OBSCURA_MODEL_DIR", "/tmp/ob-models-test");
         assert_eq!(cache_dir().unwrap(), PathBuf::from("/tmp/ob-models-test"));
-        std::env::remove_var("SB_MODEL_DIR");
+        std::env::remove_var("OBSCURA_MODEL_DIR");
     }
 
     #[test]

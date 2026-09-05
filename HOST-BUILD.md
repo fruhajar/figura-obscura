@@ -108,7 +108,7 @@ timings match, the GPU is not engaged.
 `obscura setup` is the one command a fresh host needs — it downloads the recommended
 models, prints each digest, and checks ffmpeg is runnable. `obscura models fetch
 --model nudenet-320n` fetches a single model. Both write to
-`~/.cache/figura-obscura/models/` (override with `SB_MODEL_DIR`).
+`~/.cache/figura-obscura/models/` (override with `OBSCURA_MODEL_DIR`).
 
 The GUI does the same work from its first-run screen and its Models page, and
 the installers run `obscura setup --quiet` after copying files, so all three paths go
@@ -180,7 +180,7 @@ the SHA-256 matches the GitHub copy before trusting it. It has no `640m.onnx`.
 
 Its weights are on HuggingFace's LFS CDN (`us.aws.cdn.hf.co`), which is
 unreachable from the build container just like GitHub's asset host — so its
-digest is unpinned for the same reason. `ob-models` honours `SB_MODEL_DIR` and a
+digest is unpinned for the same reason. `ob-models` honours `OBSCURA_MODEL_DIR` and a
 per-model URL, so a mirror works.
 
 ## 4b. Running the GUI
@@ -202,7 +202,7 @@ you have run:
 ```
 
 Both binaries read the same cache (`~/.cache/figura-obscura/models`, or
-`SB_MODEL_DIR`), so one fetch serves both.
+`OBSCURA_MODEL_DIR`), so one fetch serves both.
 
 **GPU applies to the GUI too, but only if compiled in.** The execution provider
 is a compile-time feature, not a runtime switch, and `obscura-gui` depends on

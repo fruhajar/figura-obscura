@@ -135,10 +135,10 @@ impl Default for Prefs {
 }
 
 /// Where the preferences file lives, e.g. `~/.config/figura-obscura/settings.json`.
-/// Overridable with `SB_CONFIG_DIR`, which the packaging scripts use to test a
+/// Overridable with `OBSCURA_CONFIG_DIR`, which the packaging scripts use to test a
 /// clean first run without touching the developer's real config.
 pub fn config_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("SB_CONFIG_DIR") {
+    if let Some(dir) = std::env::var_os("OBSCURA_CONFIG_DIR") {
         if !dir.is_empty() {
             return Some(PathBuf::from(dir));
         }
