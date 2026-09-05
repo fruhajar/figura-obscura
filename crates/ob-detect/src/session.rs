@@ -9,13 +9,13 @@
 use crate::postprocess::{map_label, nms};
 use crate::preprocess::{letterbox_chw_with, Letterbox, Resampler};
 use crate::{DetectError, Detector, ExecProvider};
-use ort::execution_providers::ExecutionProviderDispatch;
-use ort::session::{builder::GraphOptimizationLevel, Session};
-use ort::value::Tensor;
 use ob_core::geometry::{BBox, Detection, Frame};
 use ob_core::registry::{LabelMap, ModelEntry};
 use ob_core::settings::SettingValues;
 use ob_core::taxonomy::Category;
+use ort::execution_providers::ExecutionProviderDispatch;
+use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::value::Tensor;
 use std::path::PathBuf;
 use std::sync::Mutex;
 

@@ -9,12 +9,12 @@
 use crate::downloads::Downloads;
 use crate::prefs::{Prefs, Tab};
 use crate::run::{EstimateJob, PreviewJob, RunHandle, RunState};
-use ob_detect::tile::{TilingConfig, TilingMode};
-use ob_job::estimate::{Calibration, CostModel, ProbedItem, Workload};
 use crate::theme;
 use egui::{CentralPanel, RichText, SidePanel, TopBottomPanel};
 use ob_core::registry::ModelEntry;
 use ob_core::settings::SettingValues;
+use ob_detect::tile::{TilingConfig, TilingMode};
+use ob_job::estimate::{Calibration, CostModel, ProbedItem, Workload};
 use ob_media::tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -51,7 +51,9 @@ fn fingerprint<T: serde::Serialize>(value: &T) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // A value that will not serialise cannot be previewed either; hashing the
     // empty string just means "unchanged", which is the safe direction.
-    serde_json::to_string(value).unwrap_or_default().hash(&mut h);
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .hash(&mut h);
     h.finish()
 }
 
@@ -1200,10 +1202,7 @@ mod tests {
         let k = keys(1, 1);
 
         // A change arms the timer rather than firing immediately.
-        assert!(matches!(
-            sched.poll(k, false, t0),
-            PreviewNext::Wait(_)
-        ));
+        assert!(matches!(sched.poll(k, false, t0), PreviewNext::Wait(_)));
         // Still moving: the timer restarts, so a drag never renders mid-drag.
         let k2 = keys(1, 2);
         assert!(matches!(

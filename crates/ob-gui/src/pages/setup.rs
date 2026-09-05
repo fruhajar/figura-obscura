@@ -22,7 +22,11 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
         ui.add_space(48.0);
         ui.set_max_width(560.0);
 
-        ui.label(RichText::new("Welcome to Figura Obscura").size(24.0).strong());
+        ui.label(
+            RichText::new("Welcome to Figura Obscura")
+                .size(24.0)
+                .strong(),
+        );
         ui.add_space(4.0);
         ui.label(
             RichText::new(

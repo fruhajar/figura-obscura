@@ -269,7 +269,15 @@ impl FrameSource for FfmpegSampler {
             .arg("-i")
             .arg(&self.path)
             .args([
-                "-map", "0:v:0", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
             ])
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())

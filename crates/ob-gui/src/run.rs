@@ -498,9 +498,7 @@ impl PreviewJob {
             // which regions survive, which is exactly what is being tuned.
             let result = spec
                 .build(&settings)
-                .and_then(|d| {
-                    ob_job::preview_detect(&input, d.as_ref()).map_err(|e| e.to_string())
-                })
+                .and_then(|d| ob_job::preview_detect(&input, d.as_ref()).map_err(|e| e.to_string()))
                 .and_then(|src| {
                     let pair =
                         ob_job::preview_compose(&src, &profile).map_err(|e| e.to_string())?;

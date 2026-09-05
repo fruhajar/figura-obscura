@@ -277,7 +277,8 @@ mod tests {
         // Only one member can see genitalia at all, so one vote is the most
         // that category can ever get — it must still be kept.
         assert!(
-            out.iter().any(|d| d.category == cat::FEMALE_GENITALIA_EXPOSED),
+            out.iter()
+                .any(|d| d.category == cat::FEMALE_GENITALIA_EXPOSED),
             "a specialist deleted a category it is structurally unable to vote on"
         );
     }

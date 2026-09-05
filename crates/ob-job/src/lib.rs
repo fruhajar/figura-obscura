@@ -10,7 +10,6 @@ pub mod estimate;
 pub mod expand;
 
 use expand::{output_path, InputSpec, MediaItem};
-use rayon::prelude::*;
 use ob_censor::apply as apply_censor;
 use ob_core::cancel::CancelToken;
 use ob_core::geometry::{Detection, Frame};
@@ -19,6 +18,7 @@ use ob_detect::Detector;
 use ob_media::video::{FfmpegSampler, FfmpegSink, FfmpegSource, VideoEncodeOpts};
 use ob_media::{classify, load_image, save_image, FrameSink, FrameSource, MediaKind};
 use ob_track::{TrackConfig, Tracker};
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -274,11 +274,7 @@ fn process_image(
 /// it exists to let the tracker coast between neighbouring frames, and these
 /// samples are seconds apart. For the same reason no tracker is used — there is
 /// no continuity between the samples to smooth.
-fn sample_video(
-    input: &Path,
-    cfg: &JobConfig,
-    detector: &dyn Detector,
-) -> Result<usize, JobError> {
+fn sample_video(input: &Path, cfg: &JobConfig, detector: &dyn Detector) -> Result<usize, JobError> {
     let mut source = FfmpegSampler::open(input, cfg.dry_run_frames)?;
     let mut total = 0usize;
     while let Some(mut frame) = source.next_frame()? {
