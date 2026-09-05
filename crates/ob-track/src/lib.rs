@@ -76,6 +76,11 @@ impl Tracker {
     }
 
     fn integrate(&mut self, dets: &[Detection]) {
+        // `matched` is indexed by track, and must therefore grow with
+        // `self.tracks` — an unmatched detection pushes a new track inside this
+        // loop, and the next detection then iterates over it. Letting the two
+        // fall out of step panicked on the second detection of the very first
+        // frame: `tracks` had one entry, `matched` still had none.
         let mut matched = vec![false; self.tracks.len()];
         for d in dets {
             // Find the best unmatched track of the same category.
@@ -97,15 +102,29 @@ impl Tracker {
                     t.det.score = d.score;
                     t.ttl = self.cfg.ttl;
                 }
-                None => self.tracks.push(Track {
-                    det: *d,
-                    ttl: self.cfg.ttl,
-                }),
+                None => {
+                    self.tracks.push(Track {
+                        det: *d,
+                        ttl: self.cfg.ttl,
+                    });
+                    // Marked matched, which does double duty: it keeps the two
+                    // vectors the same length, and it stops a later detection in
+                    // this same frame from matching a track that was created from
+                    // an earlier one — two detections in one frame are two
+                    // objects, and merging them would drop a censored region.
+                    // It also exempts the new track from the ageing pass below,
+                    // which is right: it was just seen.
+                    matched.push(true);
+                }
             }
         }
-        // Age unmatched existing tracks.
-        for (i, t) in self.tracks.iter_mut().enumerate() {
-            if i < matched.len() && !matched[i] {
+        // Age unmatched existing tracks. The lengths are now equal by
+        // construction; the guard that used to be here was hiding the bug above
+        // rather than fixing it, since it silently skipped ageing for tracks
+        // that `matched` had no room for.
+        debug_assert_eq!(self.tracks.len(), matched.len());
+        for (t, was_matched) in self.tracks.iter_mut().zip(&matched) {
+            if !was_matched {
                 t.ttl = t.ttl.saturating_sub(1);
             }
         }
@@ -128,6 +147,50 @@ fn smooth(from: &BBox, to: &BBox, alpha: f32) -> BBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_detections_on_the_very_first_frame_do_not_panic() {
+        // The reported crash, exactly: `index out of bounds: the len is 0 but
+        // the index is 0` at the `matched[i]` lookup. The first detection
+        // pushed a track, growing `tracks` to 1 while `matched` stayed empty,
+        // and the second detection then indexed it. Every video whose detector
+        // found two regions on its first detect frame aborted the process.
+        let mut t = Tracker::new(TrackConfig::default());
+        let out = t.update(Some(&[det(0.0), det(100.0)]));
+        assert_eq!(out.len(), 2, "both regions must survive the first frame");
+    }
+
+    #[test]
+    fn many_new_detections_in_one_frame_all_become_tracks() {
+        let mut t = Tracker::new(TrackConfig::default());
+        let dets: Vec<_> = (0..8).map(|i| det(i as f32 * 50.0)).collect();
+        assert_eq!(t.update(Some(&dets)).len(), 8);
+    }
+
+    #[test]
+    fn a_track_created_this_frame_is_not_reused_by_a_later_detection() {
+        // Two overlapping detections in one frame are two objects — NMS decides
+        // whether they should have been merged, not the tracker. If the second
+        // matched the track the first had just created, one censored region
+        // would silently vanish.
+        let mut t = Tracker::new(TrackConfig::default());
+        let out = t.update(Some(&[det(0.0), det(1.0)])); // IoU well above match_iou
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn a_brand_new_track_is_not_aged_on_the_frame_it_appears() {
+        // It was just seen, so it must start with a full ttl; ageing it here
+        // would shorten every track's life by one frame.
+        let cfg = TrackConfig {
+            ttl: 1,
+            ..Default::default()
+        };
+        let mut t = Tracker::new(cfg);
+        t.update(Some(&[det(0.0)]));
+        // With ttl 1, an immediate ageing would have dropped it already.
+        assert_eq!(t.update(None).len(), 0);
+    }
     use ob_core::taxonomy::cat;
 
     fn det(x1: f32) -> Detection {

@@ -73,6 +73,7 @@ install -m 0644 "$repo_root/packaging/assets/figura-obscura.icns" \
     "$app/Contents/Resources/figura-obscura.icns"
 install -m 0644 "$repo_root/packaging/common/THIRD-PARTY.md" \
     "$app/Contents/Resources/THIRD-PARTY.md"
+install -m 0644 "$repo_root/LICENSE" "$app/Contents/Resources/LICENSE"
 
 # ob-media searches Contents/Resources/bin — see ob-media::tools::bundle_dirs.
 if [[ -n "$ffmpeg_dir" ]]; then
@@ -113,6 +114,7 @@ cp -R "$app" "$staging/"
 # The drag-to-install convention; without it users run the app from the image.
 ln -s /Applications "$staging/Applications"
 cp "$repo_root/packaging/common/THIRD-PARTY.md" "$staging/"
+cp "$repo_root/LICENSE" "$staging/"
 hdiutil create -volname "Figura Obscura $version" -srcfolder "$staging" \
     -ov -format UDZO "$dmg"
 
