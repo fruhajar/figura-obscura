@@ -19,8 +19,10 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new("Figura Obscura").size(18.0).strong());
                 ui.label(
-                    RichText::new(format!("version {}", env!("CARGO_PKG_VERSION")))
-                        .color(p.text_dim),
+                    // The commit, not just `0.1.0` — on Windows the GUI has no
+                    // console for `--version` to print to, so this page is the
+                    // only way to tell which build is running.
+                    RichText::new(format!("version {}", ob_core::version::LONG)).color(p.text_dim),
                 );
                 ui.add_space(6.0);
                 ui.label(

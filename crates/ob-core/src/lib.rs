@@ -16,6 +16,7 @@
 //! - [`filter`]   — selective-censoring rules over the taxonomy (R3).
 //! - [`censor`]   — box censor styles and per-part overrides (R4).
 //! - [`profile`]  — the serializable "what + how" job profile.
+//! - [`version`]  — the build's version + commit, for `--version`.
 
 pub mod cancel;
 pub mod censor;
@@ -25,6 +26,7 @@ pub mod profile;
 pub mod registry;
 pub mod settings;
 pub mod taxonomy;
+pub mod version;
 
 // Convenience re-exports for downstream crates.
 pub use censor::{CensorConfig, CensorStyle, OverlayFit, RegionShape};

@@ -26,6 +26,17 @@ const WINDOW_ICON: &[u8] = include_bytes!("../../../packaging/assets/window-icon
 const WINDOW_ICON_SIZE: u32 = 256;
 
 fn main() -> eframe::Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        // Hand-rolled rather than pulling clap into the GUI for one flag. On
+        // Windows this is a GUI-subsystem binary with no console attached, so
+        // nothing appears there — the About page carries the same string.
+        println!("obscura-gui {}", ob_core::version::LONG);
+        return Ok(());
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("Figura Obscura {}", env!("CARGO_PKG_VERSION")))

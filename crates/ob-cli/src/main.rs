@@ -24,7 +24,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "obscura",
-    about = "Figura Obscura — offline batch censoring for images and video"
+    about = "Figura Obscura — offline batch censoring for images and video",
+    // Version *and* commit: a bug report that says `0.1.0` cannot tell a build
+    // from before a fix apart from one after it.
+    version = ob_core::version::LONG
 )]
 struct Cli {
     #[command(subcommand)]

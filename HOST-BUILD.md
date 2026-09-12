@@ -220,6 +220,19 @@ cargo install --path crates/ob-cli --features ob-detect/cuda
 cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
 
+Both binaries take `--version`, and print the commit they were built from as
+well as `0.1.0`:
+
+```sh
+obscura --version          # obscura 0.1.0 (3e0e567)
+obscura-gui --version      # obscura-gui 0.1.0 (3e0e567)
+```
+
+Check it before reporting a bug: an installed binary does not update when the
+checkout does, so a crash that the working tree has already fixed usually means
+the install is older than the fix. The GUI shows the same string on its About
+page, which is the way to read it on Windows (no console is attached there).
+
 The GUI is eframe/winit on OpenGL and picks up Wayland or X11 automatically from
 `WAYLAND_DISPLAY`/`DISPLAY`. With neither set it exits immediately with
 `neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set` — that is the
