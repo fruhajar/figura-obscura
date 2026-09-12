@@ -217,7 +217,7 @@ To put them on `PATH`:
 
 ```sh
 cargo install --path crates/ob-cli --features ob-detect/cuda
-cargo install --path crates/obscura-gui --features ob-detect/cuda
+cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
 
 The GUI is eframe/winit on OpenGL and picks up Wayland or X11 automatically from
