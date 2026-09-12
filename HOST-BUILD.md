@@ -221,11 +221,11 @@ cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
 
 Both binaries take `--version`, and print the commit they were built from as
-well as `0.1.0`:
+well as `0.2.0`:
 
 ```sh
-obscura --version          # obscura 0.1.0 (3e0e567)
-obscura-gui --version      # obscura-gui 0.1.0 (3e0e567)
+obscura --version          # obscura 0.2.0 (3e0e567)
+obscura-gui --version      # obscura-gui 0.2.0 (3e0e567)
 ```
 
 Check it before reporting a bug: an installed binary does not update when the
