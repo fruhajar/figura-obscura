@@ -343,10 +343,21 @@ fn process_video(
             .collect();
         apply_censor(&mut frame, &selected, &cfg.profile.censor)?;
         total += selected.len();
-        sink.put_frame(&frame)?;
+        // Same reasoning as the cancel path above: whatever the encoder
+        // managed to write before it died is not a censored copy of anything,
+        // and an output folder that contains it invites someone to publish it.
+        // A failed `.webm` used to leave a zero-byte file behind exactly here.
+        if let Err(e) = sink.put_frame(&frame) {
+            drop(sink);
+            let _ = std::fs::remove_file(output);
+            return Err(e.into());
+        }
         idx += 1;
     }
-    sink.finish()?;
+    if let Err(e) = sink.finish() {
+        let _ = std::fs::remove_file(output);
+        return Err(e.into());
+    }
     Ok(total)
 }
 
@@ -907,6 +918,60 @@ mod tests {
             ob_media::MediaKind::Video,
             "the output gif was flattened to a single frame"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_webm_round_trips_instead_of_breaking_the_pipe() {
+        // The regression: every `.webm` failed with `Broken pipe (os error
+        // 32)`. The output kept the input's extension, but the encoder was
+        // always handed libx264, which the WebM muxer refuses — so ffmpeg died
+        // writing the header and the first frame we wrote hit a dead pipe. The
+        // codec has to follow the container.
+        if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        }
+        let dir = std::env::temp_dir().join("ob-job-test-webm");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("a.webm");
+        // VP8 + Vorbis: what a WebM in the wild actually carries, and what the
+        // audio-copy path has to stay legal for.
+        let ok = ob_media::tools::command(ob_media::tools::Tool::Ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=1:size=64x48:rate=10")
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-c:v", "libvpx", "-b:v", "200k", "-c:a", "libvorbis"])
+            .arg(&src)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !ok {
+            let _ = std::fs::remove_dir_all(&dir);
+            eprintln!("skipped: could not author a test webm");
+            return;
+        }
+
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &src, &out);
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.failed, 0, "the webm failed to process");
+        assert_eq!(summary.ok, 1);
+
+        let written = out.join("a.webm");
+        assert!(written.exists(), "no output webm written");
+        let info = ob_media::video::probe(&written).unwrap();
+        assert_eq!((info.width, info.height), (64, 48));
+        // The audio was copied, not dropped: Vorbis is legal in WebM, so the
+        // stream should have come through untouched.
+        assert!(info.has_audio, "the source audio was lost");
+        assert_eq!(info.audio_codec.as_deref(), Some("vorbis"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

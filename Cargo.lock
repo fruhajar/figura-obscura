@@ -2701,7 +2701,7 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "ob-censor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "image",
  "ob-core",
@@ -2710,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "ob-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "ob-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2735,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "ob-detect"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ndarray",
  "ob-core",
@@ -2745,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "ob-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "eframe",
@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "ob-job"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "globset",
  "image",
@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "ob-media"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "image",
  "ob-core",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "ob-models"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "ob-core",
@@ -2801,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "ob-track"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ob-core",
 ]
@@ -5506,7 +5506,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",

@@ -2,7 +2,7 @@
 //!
 //! `CARGO_PKG_VERSION` alone cannot answer the question that actually matters
 //! in a bug report — *which build is this?* — because every build between two
-//! releases carries the same `0.2.0`. A user running a binary from before a
+//! releases carries the same `0.3.0`. A user running a binary from before a
 //! fix, and a user running one from after it, report the same version. So the
 //! commit goes in too.
 //!
