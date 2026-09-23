@@ -260,13 +260,16 @@ mod tests {
         assert_eq!(gpu_support_compiled_in(), has_gpu);
         // And a default build has no GPU provider, which is precisely the case
         // that used to be indistinguishable from a GPU one.
-        assert_eq!(gpu_support_compiled_in(), cfg!(any(
-            feature = "cuda",
-            feature = "rocm",
-            feature = "webgpu",
-            feature = "directml",
-            feature = "coreml"
-        )));
+        assert_eq!(
+            gpu_support_compiled_in(),
+            cfg!(any(
+                feature = "cuda",
+                feature = "rocm",
+                feature = "webgpu",
+                feature = "directml",
+                feature = "coreml"
+            ))
+        );
     }
 
     #[test]

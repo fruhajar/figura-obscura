@@ -779,10 +779,9 @@ impl FfmpegSink {
         let palette = intermediate.with_extension("palette.png");
 
         let run = |what: &str, cmd: &mut std::process::Command| -> Result<(), MediaError> {
-            let out = cmd
-                .stdin(Stdio::null())
-                .output()
-                .map_err(|e| MediaError::Video(format!("could not spawn ffmpeg for {what}: {e}")))?;
+            let out = cmd.stdin(Stdio::null()).output().map_err(|e| {
+                MediaError::Video(format!("could not spawn ffmpeg for {what}: {e}"))
+            })?;
             if !out.status.success() {
                 let says = String::from_utf8_lossy(&out.stderr).trim().to_string();
                 return Err(MediaError::Video(format!(
