@@ -103,7 +103,7 @@ obscura --version             # or: obscura-gui --version, or the GUI's About pa
 ```
 
 ```
-obscura 0.4.1 (644dd82)
+obscura 0.4.2 (644dd82)
 
 execution providers (in preference order):
   CUDAExecutionProvider (ready)
@@ -132,13 +132,26 @@ nvidia-smi dmon -s u          # or: rocm-smi --showuse / radeontop
 A useful A/B: time the same batch with and without the feature flag. If the
 timings match, the GPU is not engaged.
 
-### Shipping a webgpu build
+### Shipping a GPU build
 
 `--gpu webgpu` produces no `onnxruntime_providers_*` library. It links
 `libwebgpu_dawn.so` instead, and links it *directly* — a package missing that
 file does not fall back to CPU, the binary fails to start with
 `libwebgpu_dawn.so: cannot open shared object file`. `packaging/stage.sh` stages
 it and refuses any GPU build that produced no runtime library at all.
+
+Staging the libraries is not enough on its own: they sit beside the binaries in
+the tarball and under `<prefix>/lib/figura-obscura` once installed, and the
+dynamic loader searches neither. So `stage.sh` links GPU builds with
+
+```
+-C link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/../lib/figura-obscura
+```
+
+which covers both layouts, because `$ORIGIN` resolves against the binary's own
+location. Without it a webgpu build does not start at all, and a cuda build
+starts but cannot `dlopen` its providers — the silent CPU fallback once more.
+Confirm with `readelf -d <binary> | grep RUNPATH`.
 
 ## 4. Models
 
@@ -258,11 +271,11 @@ cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
 
 Both binaries take `--version`, and print the commit they were built from as
-well as `0.4.1`:
+well as `0.4.2`:
 
 ```sh
-obscura --version          # obscura 0.4.1 (3e0e567)
-obscura-gui --version      # obscura-gui 0.4.1 (3e0e567)
+obscura --version          # obscura 0.4.2 (3e0e567)
+obscura-gui --version      # obscura-gui 0.4.2 (3e0e567)
 ```
 
 Check it before reporting a bug: an installed binary does not update when the

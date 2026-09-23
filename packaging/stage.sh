@@ -54,8 +54,32 @@ case "$gpu" in
     *) echo "error: --gpu must be one of none, cuda, webgpu" >&2; exit 1 ;;
 esac
 
+# A GPU build's runtime libraries are not where the dynamic loader looks. They
+# sit beside the binaries in the tarball, and under
+# <prefix>/lib/figura-obscura once install.sh has run -- neither of which is on
+# the default search path, and nothing else puts them there. Without a RUNPATH
+# covering both, a webgpu build does not start at all
+# ("libwebgpu_dawn.so: cannot open shared object file"), because it links dawn
+# directly; a cuda build starts but cannot dlopen its providers, which is the
+# silent CPU fallback again.
+#
+# $ORIGIN is resolved by the loader against the binary's own location, so one
+# RUNPATH serves both layouts and survives the user moving the install. It must
+# reach the linker literally, hence the single quotes.
+rustflags=()
+if [[ "$gpu" != "none" && "$(uname -s)" == "Linux" ]]; then
+    rustflags=(-C 'link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/../lib/figura-obscura')
+fi
+
 echo "==> building (release, gpu=$gpu)"
-( cd "$repo_root" && cargo build --release --workspace "${features[@]}" )
+(
+    cd "$repo_root"
+    if [[ ${#rustflags[@]} -gt 0 ]]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} ${rustflags[*]}"
+        echo "    RUSTFLAGS=$RUSTFLAGS"
+    fi
+    cargo build --release --workspace "${features[@]}"
+)
 
 # --- 2. stage ---------------------------------------------------------------
 echo "==> staging into $stage"
