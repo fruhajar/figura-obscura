@@ -84,7 +84,16 @@ for lib in "$here"/*onnxruntime_providers_*; do
     [[ -f "$lib" ]] && install -m 0755 "$lib" "$libdir/$(basename "$lib")"
 done
 
-install -m 0644 "$here/figura-obscura.desktop" "$appdir/figura-obscura.desktop"
+# Exec is rewritten to an absolute path. The shipped entry says a bare
+# `obscura-gui` because the AppImage needs it that way, but a bare name leaves
+# the desktop session's PATH to decide which copy launches -- so any stray older
+# binary (classically ~/.cargo/bin/obscura-gui) goes on opening from the
+# applications menu long after this one is installed, and the menu silently
+# reports the old version.
+sed "s|^Exec=obscura-gui\\b|Exec=$bindir/obscura-gui|" \
+    "$here/figura-obscura.desktop" > "$appdir/figura-obscura.desktop"
+chmod 0644 "$appdir/figura-obscura.desktop"
+
 for size in 16 32 48 64 128 256 512; do
     src="$here/assets/icon-${size}.png"
     if [[ -f "$src" ]]; then
@@ -121,6 +130,32 @@ case ":$PATH:" in
         echo "    export PATH=\"\$PATH:$bindir\""
         ;;
 esac
+
+# --- shadowed by another copy? ----------------------------------------------
+# The menu entry is absolute, so it always opens the copy installed above, but
+# another obscura-gui earlier on PATH still answers at the shell -- and it is
+# the reason an old version appears to survive a reinstall. Worth naming both,
+# with versions, rather than leaving it to be discovered.
+# First line only: `--version` also reports the build's execution providers,
+# which would bury this two-line note in a wall of text. A binary old enough to
+# have no --version at all prints nothing, hence the fallback.
+version_of() {
+    local v
+    v="$("$1" --version 2>/dev/null | head -n1)" || true
+    if [[ -n "$v" ]]; then printf '%s\n' "$v"; else echo "version unknown"; fi
+}
+shadow="$(command -v obscura-gui 2>/dev/null || true)"
+if [[ -n "$shadow" && "$shadow" != "$bindir/obscura-gui" ]]; then
+    cat <<MSG
+
+Note: 'obscura-gui' on your PATH is another copy:
+    $shadow  ->  $(version_of "$shadow")
+this install is:
+    $bindir/obscura-gui  ->  $(version_of "$bindir/obscura-gui")
+Remove the other one ('cargo uninstall ob-gui' if it came from cargo install),
+or put $bindir earlier on your PATH.
+MSG
+fi
 
 cat <<MSG
 
