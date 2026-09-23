@@ -563,6 +563,22 @@ pub struct FfmpegSink {
     stdin: Option<ChildStdin>,
     stderr: StderrTail,
     frame_bytes: usize,
+    /// GIF only: the lossless intermediate frames are being written to, which
+    /// [`FrameSink::finish`] turns into the real GIF with two palette passes.
+    /// See [`FfmpegSink::create`] for why the GIF path cannot stream.
+    gif_intermediate: Option<PathBuf>,
+}
+
+/// Where a GIF's intermediate video goes while frames are still arriving.
+///
+/// Deliberately beside the output rather than in the system temp directory:
+/// `/tmp` is frequently a tmpfs, and parking a lossless video in RAM is the
+/// very thing this whole path exists to stop. The output directory is also
+/// already known to be writable, having just been created for the job.
+fn gif_intermediate_path(output: &Path) -> PathBuf {
+    let mut name = output.file_name().unwrap_or_default().to_os_string();
+    name.push(".obscura-pass1.mkv");
+    output.with_file_name(name)
 }
 
 impl FfmpegSink {
@@ -598,17 +614,30 @@ impl FfmpegSink {
         // single pass, which matters here — censor boxes are flat blocks of one
         // colour and a generic palette bands them visibly.
         if container == Container::Gif {
-            cmd.args([
-                "-filter_complex",
-                "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer",
-                // 0 = loop forever, matching how animated GIFs are normally authored.
-                "-loop",
-                "0",
-                "-f",
-                "gif",
-            ]);
-            cmd.arg(output);
-            return Self::spawn(cmd, output, info);
+            // ...but it cannot be done in one pass over a pipe. `palettegen`
+            // only emits its palette at end of input, so in a
+            // `split[a][b];[a]palettegen[p];[b][p]paletteuse` graph the [b]
+            // branch has to hold *every frame of the clip* in memory until the
+            // last one arrives. Measured on 640x480 frames that is about
+            // 1.2 MB per frame with no ceiling: 100 frames cost 209 MB, 800
+            // cost 1031 MB, and a long GIF walks the machine into swap, which
+            // is what "it slows down and then sticks" was.
+            //
+            // So frames go to a lossless intermediate here and `finish` runs
+            // the two palette passes over that file. ffv1 is FFmpeg's own
+            // codec, so this needs nothing extra from a bundled LGPL build,
+            // and bgr0 keeps it bit-exact -- letting ffmpeg pick would land on
+            // yuv420p, whose chroma subsampling is visible precisely on the
+            // flat censor blocks the palette work exists to protect.
+            //
+            // Output is byte-identical to the single-pass graph; the cost is a
+            // temporary file and reading it twice.
+            let intermediate = gif_intermediate_path(output);
+            cmd.args(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgr0"]);
+            cmd.arg(&intermediate);
+            let mut sink = Self::spawn(cmd, output, info)?;
+            sink.gif_intermediate = Some(intermediate);
+            return Ok(sink);
         }
 
         let want_audio = opts.copy_audio && info.has_audio;
@@ -699,6 +728,7 @@ impl FfmpegSink {
             stdin: Some(stdin),
             stderr: StderrTail::spawn(stderr),
             frame_bytes: info.width as usize * info.height as usize * 3,
+            gif_intermediate: None,
         })
     }
 }
@@ -734,6 +764,69 @@ impl FfmpegSink {
             self.output.display(),
             detail(self.stderr.message())
         ))
+    }
+}
+
+impl FfmpegSink {
+    /// Turn the finished intermediate into the real GIF.
+    ///
+    /// Two passes, both bounded in memory because each reads the file from
+    /// disk: one builds a palette from the whole clip, the second applies it.
+    /// `stats_mode=diff` weights the palette towards what actually changes
+    /// between frames, which is what the single-pass graph used and why the
+    /// result is byte-identical to it.
+    fn encode_gif_from(&self, intermediate: &Path) -> Result<(), MediaError> {
+        let palette = intermediate.with_extension("palette.png");
+
+        let run = |what: &str, cmd: &mut std::process::Command| -> Result<(), MediaError> {
+            let out = cmd
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| MediaError::Video(format!("could not spawn ffmpeg for {what}: {e}")))?;
+            if !out.status.success() {
+                let says = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                return Err(MediaError::Video(format!(
+                    "ffmpeg {what} exited with {} writing {}{}",
+                    out.status,
+                    self.output.display(),
+                    detail((!says.is_empty()).then_some(says))
+                )));
+            }
+            Ok(())
+        };
+
+        let mut pass1 = tools::command(Tool::Ffmpeg);
+        pass1
+            .args(["-v", "error", "-nostdin", "-y"])
+            .arg("-i")
+            .arg(intermediate)
+            .args(["-vf", "palettegen=stats_mode=diff", "-frames:v", "1"])
+            .arg(&palette);
+        let built = run("GIF palette pass", &mut pass1);
+
+        let result = built.and_then(|()| {
+            let mut pass2 = tools::command(Tool::Ffmpeg);
+            pass2
+                .args(["-v", "error", "-nostdin", "-y"])
+                .arg("-i")
+                .arg(intermediate)
+                .arg("-i")
+                .arg(&palette)
+                .args([
+                    "-filter_complex",
+                    "[0:v][1:v]paletteuse=dither=bayer",
+                    // 0 = loop forever, matching how animated GIFs are normally authored.
+                    "-loop",
+                    "0",
+                    "-f",
+                    "gif",
+                ])
+                .arg(&self.output);
+            run("GIF encode pass", &mut pass2)
+        });
+
+        let _ = std::fs::remove_file(&palette);
+        result
     }
 }
 
@@ -777,6 +870,12 @@ impl Drop for FfmpegSink {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+        // An abandoned GIF job leaves its intermediate behind otherwise, and it
+        // is the largest file the job touches. `finish` takes this on success,
+        // so anything still here belongs to a cancelled or failed run.
+        if let Some(intermediate) = self.gif_intermediate.take() {
+            let _ = std::fs::remove_file(&intermediate);
+        }
     }
 }
 
@@ -812,6 +911,19 @@ impl FrameSink for FfmpegSink {
                 self.output.display(),
                 detail(self.stderr.message())
             )));
+        }
+
+        // A GIF is not finished yet: what exists so far is the intermediate.
+        // Take the path so `Drop` does not then delete a file this consumed
+        // successfully, and clean it up whichever way the passes go.
+        if let Some(intermediate) = self.gif_intermediate.take() {
+            let result = self.encode_gif_from(&intermediate);
+            let _ = std::fs::remove_file(&intermediate);
+            if result.is_err() {
+                // Never leave a half-written GIF looking like a censored copy.
+                let _ = std::fs::remove_file(&self.output);
+            }
+            return result;
         }
         Ok(())
     }

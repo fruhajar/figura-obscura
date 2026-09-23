@@ -922,6 +922,72 @@ mod tests {
     }
 
     #[test]
+    fn a_gif_keeps_every_frame_and_leaves_no_intermediate() {
+        // GIF encoding cannot stream: `palettegen` only emits its palette at
+        // end of input, so the single-pass graph held the entire clip in
+        // memory and a long GIF dragged the machine into swap. Frames now go
+        // to a lossless intermediate that two palette passes read back.
+        //
+        // Two things that fix can get wrong, both pinned here: dropping or
+        // duplicating frames across the extra hop, and leaving the
+        // intermediate -- the largest file the job touches -- behind.
+        if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        }
+        let dir = std::env::temp_dir().join("ob-job-test-gif-twopass");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("a.gif");
+        let ok = ob_media::tools::command(ob_media::tools::Tool::Ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=2:size=64x48:rate=10")
+            .arg(&src)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !ok {
+            let _ = std::fs::remove_dir_all(&dir);
+            eprintln!("skipped: could not author a test gif");
+            return;
+        }
+        let before = ob_media::video::probe(&src).unwrap().frame_count;
+
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &src, &out);
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.failed, 0, "the gif failed to process");
+
+        let written = out.join("a.gif");
+        let after = ob_media::video::probe(&written).unwrap().frame_count;
+        // ffprobe does report nb_frames for GIF, so this comparison does run;
+        // it is guarded so a build that declines to count frames skips the
+        // check rather than failing on something that is not our bug. The
+        // leftover check below is the unconditional one.
+        if let (Some(b), Some(a)) = (before, after) {
+            assert_eq!(a, b, "frame count changed passing through the intermediate");
+        }
+
+        // Nothing but the GIF itself should survive in the output directory.
+        let leftovers: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "a.gif")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the GIF intermediate was left behind: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_webm_round_trips_instead_of_breaking_the_pipe() {
         // The regression: every `.webm` failed with `Broken pipe (os error
         // 32)`. The output kept the input's extension, but the encoder was
