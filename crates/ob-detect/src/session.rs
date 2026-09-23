@@ -27,8 +27,14 @@ pub struct OnnxDetector {
     label_map: LabelMap,
     conf_threshold: f32,
     nms_iou: f32,
-    #[allow(dead_code)]
-    execution_providers: Vec<ExecProvider>,
+    /// The provider the session actually loaded on — see
+    /// [`Detector::execution_provider`]. Previously this held the *requested*
+    /// list and was never read, which is why nothing noticed that a GPU build
+    /// was running on CPU.
+    execution_provider: ExecProvider,
+    /// Why each preferred provider ahead of the active one was passed over.
+    /// Empty on a clean GPU load, and the whole diagnosis when it is not.
+    ep_notes: Vec<String>,
     /// The name of the model's single image input tensor (e.g. `"images"`).
     input_name: String,
     /// Kernel used to scale frames into model input space. See
@@ -45,33 +51,189 @@ pub struct OnnxDetector {
 /// Map Obscura's ordered EP preference to `ort` execution-provider dispatches.
 ///
 /// Only providers whose Cargo feature is enabled are compiled in; CPU is always
-/// available and always last, so registration silently falls back to it.
-fn execution_provider_dispatches() -> Vec<ExecutionProviderDispatch> {
+/// available and always last. Kept in the same order as
+/// [`crate::preferred_execution_providers`], which names these for reporting.
+// See `preferred_execution_providers` — `#[cfg]`-gated elements, so this cannot
+// be a `vec![]` literal however it looks on a CPU-only build.
+#[allow(clippy::vec_init_then_push)]
+fn execution_provider_dispatches() -> Vec<(ExecProvider, ExecutionProviderDispatch)> {
     #[allow(unused_mut)]
-    let mut eps: Vec<ExecutionProviderDispatch> = Vec::new();
+    let mut eps: Vec<(ExecProvider, ExecutionProviderDispatch)> = Vec::new();
     #[cfg(feature = "cuda")]
-    eps.push(ort::execution_providers::CUDAExecutionProvider::default().build());
+    eps.push((
+        ExecProvider::Cuda,
+        ort::execution_providers::CUDAExecutionProvider::default().build(),
+    ));
     #[cfg(feature = "rocm")]
-    eps.push(ort::execution_providers::ROCmExecutionProvider::default().build());
+    eps.push((
+        ExecProvider::Rocm,
+        ort::execution_providers::ROCmExecutionProvider::default().build(),
+    ));
     #[cfg(feature = "webgpu")]
-    eps.push(ort::execution_providers::WebGPUExecutionProvider::default().build());
+    eps.push((
+        ExecProvider::WebGpu,
+        ort::execution_providers::WebGPUExecutionProvider::default().build(),
+    ));
     #[cfg(feature = "directml")]
-    eps.push(ort::execution_providers::DirectMLExecutionProvider::default().build());
+    eps.push((
+        ExecProvider::DirectMl,
+        ort::execution_providers::DirectMLExecutionProvider::default().build(),
+    ));
     #[cfg(feature = "coreml")]
-    eps.push(ort::execution_providers::CoreMLExecutionProvider::default().build());
-    eps.push(ort::execution_providers::CPUExecutionProvider::default().build());
+    eps.push((
+        ExecProvider::CoreMl,
+        ort::execution_providers::CoreMLExecutionProvider::default().build(),
+    ));
+    eps.push((
+        ExecProvider::Cpu,
+        ort::execution_providers::CPUExecutionProvider::default().build(),
+    ));
     eps
 }
 
-/// Build an `ort::Session` for a model file, registering the preferred execution
-/// providers in order with CPU fallback. Isolated so only this function and
-/// [`OnnxDetector::run`] touch the `ort` API.
-fn build_session(entry: &ModelEntry, model_path: &PathBuf) -> Result<Session, DetectError> {
-    Session::builder()
-        .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
-        .and_then(|b| b.with_execution_providers(execution_provider_dispatches()))
-        .and_then(|b| b.commit_from_file(model_path))
-        .map_err(|e| DetectError::Load(entry.id.to_string(), e.to_string()))
+/// What one execution provider can do in *this* binary, on *this* machine.
+///
+/// The two flags answer two different questions that look alike until they
+/// disagree, which is exactly when a GPU run turns out to be a CPU run:
+/// `compiled_in` is about the build, `available` is about the ONNX Runtime it
+/// links. The `rocm` feature makes them disagree by construction — there is no
+/// ROCm prebuilt for linux-x86_64, so `--features rocm` builds happily against
+/// the CPU runtime and produces a "GPU" binary that cannot ever use a GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpStatus {
+    pub provider: ExecProvider,
+    /// This binary was compiled with the provider's Cargo feature.
+    pub compiled_in: bool,
+    /// The linked ONNX Runtime actually ships this provider.
+    pub available: bool,
+}
+
+/// Report every execution provider this build asks for, and whether the linked
+/// ONNX Runtime can actually supply it.
+///
+/// Cheap and model-free — it only asks ORT what it was built with — so both
+/// binaries can answer "is this a GPU build?" from `--version`, without a model
+/// file or a run.
+pub fn probe_execution_providers() -> Vec<EpStatus> {
+    #[allow(unused_imports)]
+    use ort::execution_providers::ExecutionProvider as _;
+
+    // `is_available` asks the linked runtime for its provider list and looks
+    // for this provider's own name in it, so it has to be called on the
+    // concrete type — which only exists when the feature compiled it in. The
+    // arms therefore mirror `execution_provider_dispatches` rather than mapping
+    // over `preferred_execution_providers`.
+    #[allow(unused_mut)]
+    let mut out: Vec<EpStatus> = Vec::new();
+
+    #[allow(unused_macros)]
+    macro_rules! probe {
+        ($provider:expr, $ty:ty) => {
+            out.push(EpStatus {
+                provider: $provider,
+                compiled_in: true,
+                available: <$ty>::default().is_available().unwrap_or(false),
+            });
+        };
+    }
+
+    #[cfg(feature = "cuda")]
+    probe!(
+        ExecProvider::Cuda,
+        ort::execution_providers::CUDAExecutionProvider
+    );
+    #[cfg(feature = "rocm")]
+    probe!(
+        ExecProvider::Rocm,
+        ort::execution_providers::ROCmExecutionProvider
+    );
+    #[cfg(feature = "webgpu")]
+    probe!(
+        ExecProvider::WebGpu,
+        ort::execution_providers::WebGPUExecutionProvider
+    );
+    #[cfg(feature = "directml")]
+    probe!(
+        ExecProvider::DirectMl,
+        ort::execution_providers::DirectMLExecutionProvider
+    );
+    #[cfg(feature = "coreml")]
+    probe!(
+        ExecProvider::CoreMl,
+        ort::execution_providers::CoreMLExecutionProvider
+    );
+    probe!(
+        ExecProvider::Cpu,
+        ort::execution_providers::CPUExecutionProvider
+    );
+
+    out
+}
+
+/// One line per execution provider, for `--version` and bug reports.
+///
+/// Reads as `CUDAExecutionProvider (compiled in, runtime missing)` — the case
+/// that explains a GPU build pegged at a few percent GPU load.
+pub fn execution_provider_report() -> Vec<String> {
+    probe_execution_providers()
+        .into_iter()
+        .map(|s| {
+            let state = match (s.compiled_in, s.available) {
+                (true, true) => "ready",
+                (true, false) => "compiled in, missing from the linked ONNX Runtime",
+                (false, _) => "not compiled in",
+            };
+            format!("{} ({})", s.provider, state)
+        })
+        .collect()
+}
+
+/// Build an `ort::Session` for a model file, returning it alongside the
+/// execution provider that actually took.
+///
+/// Each GPU provider is tried on its own with `error_on_failure`, newest
+/// builder each time, and a failure moves to the next candidate. The bulk
+/// `with_execution_providers` call this replaces returned `Ok` whether or not
+/// any GPU provider registered, so a driverless CUDA build reported success and
+/// then ran the whole job on CPU. Trying one at a time costs a discarded
+/// session build per failed provider — once per detector load — and buys a
+/// truthful answer about what is running the model.
+fn build_session(
+    entry: &ModelEntry,
+    model_path: &PathBuf,
+) -> Result<(Session, ExecProvider, Vec<String>), DetectError> {
+    let mut notes = Vec::new();
+    let candidates = execution_provider_dispatches();
+    let last = candidates.len().saturating_sub(1);
+
+    for (i, (provider, dispatch)) in candidates.into_iter().enumerate() {
+        // CPU is the floor: it is never "tried and rejected", so let its
+        // failure be the error the caller sees.
+        let is_fallback = i == last;
+        let dispatch = if is_fallback {
+            dispatch
+        } else {
+            dispatch.error_on_failure()
+        };
+
+        let built = Session::builder()
+            .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
+            .and_then(|b| b.with_execution_providers([dispatch]))
+            .and_then(|b| b.commit_from_file(model_path));
+
+        match built {
+            Ok(session) => return Ok((session, provider, notes)),
+            Err(e) if !is_fallback => {
+                notes.push(format!("{provider} unavailable: {e}"));
+            }
+            Err(e) => return Err(DetectError::Load(entry.id.to_string(), e.to_string())),
+        }
+    }
+
+    Err(DetectError::Load(
+        entry.id.to_string(),
+        "no execution provider could load the model".into(),
+    ))
 }
 
 /// Read the model's real square input side from its graph, if it declares one.
@@ -110,7 +272,7 @@ impl OnnxDetector {
         }
         let get = |k: &str, d: f64| settings.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
 
-        let session = build_session(entry, &model_path)?;
+        let (session, execution_provider, ep_notes) = build_session(entry, &model_path)?;
         // YOLOv8 exports use a single image input; read its real name so we bind
         // by name rather than assuming "images".
         let input_name = session
@@ -135,7 +297,8 @@ impl OnnxDetector {
             label_map: entry.label_map(),
             conf_threshold: get("conf_threshold", 0.2),
             nms_iou: get("nms_iou", 0.45),
-            execution_providers: crate::preferred_execution_providers(),
+            execution_provider,
+            ep_notes,
             input_name,
             resampler,
             session: Mutex::new(session),
@@ -152,6 +315,12 @@ impl OnnxDetector {
     /// passes can use the same value.
     pub fn nms_iou(&self) -> f32 {
         self.nms_iou
+    }
+
+    /// Why a preferred provider was passed over, in preference order. Empty
+    /// when the first choice loaded.
+    pub fn ep_notes(&self) -> &[String] {
+        &self.ep_notes
     }
 
     /// Run the raw model on a CHW tensor, returning the flat output tensor and
@@ -232,6 +401,10 @@ impl Detector for OnnxDetector {
     /// confidently they are asked.
     fn can_emit(&self, category: Category) -> bool {
         self.label_map.by_index.contains(&category)
+    }
+
+    fn execution_provider(&self) -> Option<ExecProvider> {
+        Some(self.execution_provider)
     }
 
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {

@@ -19,11 +19,28 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new("Figura Obscura").size(18.0).strong());
                 ui.label(
-                    // The commit, not just `0.3.0` — on Windows the GUI has no
+                    // The commit, not just `0.4.0` — on Windows the GUI has no
                     // console for `--version` to print to, so this page is the
                     // only way to tell which build is running.
                     RichText::new(format!("version {}", ob_core::version::LONG)).color(p.text_dim),
                 );
+                // What the detector can actually run on. Same reasoning as the
+                // version line above, and the more common question in practice:
+                // a CPU-only build looks identical to a GPU one until a job
+                // takes hours at a few percent GPU load.
+                let eps = ob_detect::session::execution_provider_report();
+                ui.label(
+                    RichText::new(format!("detector runs on: {}", eps.join(", ")))
+                        .color(p.text_dim),
+                );
+                if !ob_detect::gpu_support_compiled_in() {
+                    ui.label(
+                        RichText::new(
+                            "CPU-only build — no GPU execution provider was compiled in.",
+                        )
+                        .color(p.warning),
+                    );
+                }
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(

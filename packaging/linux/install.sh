@@ -79,8 +79,10 @@ if [[ -d "$here/bin" ]]; then
         [[ -f "$tool" ]] && install -m 0755 "$tool" "$libdir/$(basename "$tool")"
     done
 fi
-# GPU execution providers, when this is a GPU build.
-for lib in "$here"/*onnxruntime_providers_*; do
+# GPU runtime libraries, when this is a GPU build. `libwebgpu_dawn.so` is not
+# named like a provider but is a hard link-time dependency of a webgpu build --
+# leave it behind and the installed binary does not start at all.
+for lib in "$here"/*onnxruntime_providers_* "$here"/libwebgpu_dawn.so; do
     [[ -f "$lib" ]] && install -m 0755 "$lib" "$libdir/$(basename "$lib")"
 done
 

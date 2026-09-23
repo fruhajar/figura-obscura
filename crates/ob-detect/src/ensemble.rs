@@ -82,6 +82,15 @@ impl Detector for EnsembleDetector {
         self.members.iter().any(|m| m.can_emit(category))
     }
 
+    /// Members load independently and could in principle land on different
+    /// providers; report one only when they agree, so "GPU" never gets printed
+    /// for a run that is half on the CPU.
+    fn execution_provider(&self) -> Option<crate::ExecProvider> {
+        let mut eps = self.members.iter().filter_map(|m| m.execution_provider());
+        let first = eps.next()?;
+        eps.all(|e| e == first).then_some(first)
+    }
+
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {
         // Keep each member's output separate: votes are counted per member, so
         // one model firing twice on the same spot must not look like agreement.

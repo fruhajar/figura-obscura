@@ -198,6 +198,11 @@ impl<D: Detector> Detector for TiledDetector<D> {
         self.inner.can_emit(category)
     }
 
+    /// Tiling runs the inner model more often, on the same provider.
+    fn execution_provider(&self) -> Option<crate::ExecProvider> {
+        self.inner.execution_provider()
+    }
+
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {
         // Pass 1: the whole frame. Always run — it is the only pass that sees
         // large regions in full and the only one that runs when tiling is off.

@@ -21,13 +21,67 @@ use ob_models::{DownloadProgress, FetchOptions, FetchOutcome, ModelStatus};
 use ob_track::TrackConfig;
 use std::path::PathBuf;
 
+/// `--version` in full: build identity, then what it can run the model on.
+///
+/// Built once into a `OnceLock` because clap's `Str` borrows for `'static`, and
+/// the provider list is only knowable at runtime — it depends on what the
+/// linked ONNX Runtime turns out to contain, not just on the Cargo features.
+fn long_version() -> &'static str {
+    static LONG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LONG.get_or_init(build_long_version).as_str()
+}
+
+fn build_long_version() -> String {
+    let mut out = String::from(ob_core::version::LONG);
+    out.push_str("\n\nexecution providers (in preference order):");
+    for line in ob_detect::session::execution_provider_report() {
+        out.push_str("\n  ");
+        out.push_str(&line);
+    }
+    if !ob_detect::gpu_support_compiled_in() {
+        out.push_str(
+            "\n\nThis is a CPU-only build: no GPU execution provider was compiled in.\n\
+             Rebuild with a GPU feature to use one, e.g.\n  \
+             cargo build --release --features ob-detect/cuda    # NVIDIA\n  \
+             cargo build --release --features ob-detect/webgpu  # AMD/Intel\n\
+             See HOST-BUILD.md for the per-vendor prerequisites.",
+        );
+    }
+    out
+}
+
+/// Say what the model is about to run on, before a long job rather than after.
+///
+/// Silent on the expected outcome (a CPU-only build running on CPU) so routine
+/// runs stay quiet; loud when the build *can* use a GPU but did not, which is
+/// the case that otherwise only shows up as an unexplained slow run.
+fn report_execution_provider(detector: &dyn Detector) {
+    let Some(ep) = detector.execution_provider() else {
+        return;
+    };
+    if ep.is_gpu() {
+        eprintln!("running on {ep}");
+    } else if ob_detect::gpu_support_compiled_in() {
+        eprintln!(
+            "warning: this build has GPU support compiled in, but the model loaded on \
+             {ep}.\n         Run `obscura --version` to see which provider the linked \
+             ONNX Runtime is missing."
+        );
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "obscura",
     about = "Figura Obscura — offline batch censoring for images and video",
-    // Version *and* commit: a bug report that says `0.3.0` cannot tell a build
+    // Version *and* commit: a bug report that says `0.4.0` cannot tell a build
     // from before a fix apart from one after it.
-    version = ob_core::version::LONG
+    version = ob_core::version::LONG,
+    // `--version` additionally names the execution providers, because a
+    // CPU-only build and a CUDA one are otherwise indistinguishable from the
+    // outside — same name, same version string, same commit — and the only
+    // symptom of running the wrong one is that the job is slow.
+    long_version = long_version()
 )]
 struct Cli {
     #[command(subcommand)]
@@ -391,6 +445,7 @@ fn cmd_process(args: ProcessArgs) -> Result<()> {
         &overrides,
         !args.no_auto_fetch,
     )?;
+    report_execution_provider(detector.as_ref());
 
     // Ctrl-C asks the run to stop between files rather than killing the
     // process mid-encode, which would leave a truncated video in the output
@@ -710,6 +765,7 @@ fn cmd_preview(
 ) -> Result<()> {
     let prof = load_profile(&profile, &model)?;
     let detector = build_detector(&model, &prof.model_settings, true)?;
+    report_execution_provider(detector.as_ref());
     let frame = ob_job::preview(&input, detector.as_ref(), &prof)?;
     ob_media::save_image(&frame, &output)?;
     println!("wrote preview to {}", output.display());

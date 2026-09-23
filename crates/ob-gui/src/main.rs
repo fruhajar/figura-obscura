@@ -34,6 +34,16 @@ fn main() -> eframe::Result<()> {
         // Windows this is a GUI-subsystem binary with no console attached, so
         // nothing appears there — the About page carries the same string.
         println!("obscura-gui {}", ob_core::version::LONG);
+        // Which providers this build has, for the same reason the CLI prints
+        // them: a CPU-only build and a GPU one are otherwise identical from the
+        // outside, and the only symptom of the wrong one is a slow job.
+        println!("\nexecution providers (in preference order):");
+        for line in ob_detect::session::execution_provider_report() {
+            println!("  {line}");
+        }
+        if !ob_detect::gpu_support_compiled_in() {
+            println!("\nThis is a CPU-only build: no GPU execution provider was compiled in.");
+        }
         return Ok(());
     }
 

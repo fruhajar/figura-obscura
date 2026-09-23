@@ -78,10 +78,17 @@ install -m 0755 "$release/obscura-gui$exe_suffix" "$stage/obscura-gui$exe_suffix
 #     build; `install` dereferences, so real files are what get staged.
 #   * The symlinks are present even for a CPU build, so their existence is not
 #     evidence that a GPU build was requested — the flag is.
+#
+# Not every GPU build names its libraries the same way. CUDA ships
+# `libonnxruntime_providers_{cuda,shared,tensorrt}.so`, but WebGPU ships
+# `libwebgpu_dawn.so` and no provider library at all -- and the binary links it
+# *directly*, so a package missing it does not fall back to CPU, it fails to
+# start with "libwebgpu_dawn.so: cannot open shared object file". Matching only
+# the provider glob staged an unrunnable webgpu package.
 if [[ "$gpu" != "none" ]]; then
     shopt -s nullglob
     staged_providers=0
-    for lib in "$release"/*onnxruntime_providers_*; do
+    for lib in "$release"/*onnxruntime_providers_* "$release"/libwebgpu_dawn.so; do
         if [[ -f "$lib" ]]; then
             install -m 0755 "$lib" "$stage/$(basename "$lib")"
             echo "    + $(basename "$lib") ($(du -h "$lib" | cut -f1))"
@@ -91,9 +98,14 @@ if [[ "$gpu" != "none" ]]; then
         fi
     done
     shopt -u nullglob
-    if [[ "$gpu" == "cuda" && "$staged_providers" -eq 0 ]]; then
-        echo "error: --gpu cuda but no execution-provider libraries were produced." >&2
+    # Every GPU build must produce *something*; zero means the feature silently
+    # resolved to the CPU runtime, which is the trap HOST-BUILD.md describes.
+    # `rocm` is its own case: there is no ROCm prebuilt for linux-x86_64, so it
+    # always lands here.
+    if [[ "$staged_providers" -eq 0 ]]; then
+        echo "error: --gpu $gpu but no GPU runtime libraries were produced." >&2
         echo "       This is the silent-CPU-fallback trap described in HOST-BUILD.md." >&2
+        echo "       Check 'obscura --version' -- it names the providers this build has." >&2
         exit 1
     fi
 fi
