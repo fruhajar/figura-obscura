@@ -103,7 +103,7 @@ obscura --version             # or: obscura-gui --version, or the GUI's About pa
 ```
 
 ```
-obscura 0.4.2 (644dd82)
+obscura 0.4.3 (644dd82)
 
 execution providers (in preference order):
   CUDAExecutionProvider (ready)
@@ -271,11 +271,11 @@ cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
 
 Both binaries take `--version`, and print the commit they were built from as
-well as `0.4.2`:
+well as `0.4.3`:
 
 ```sh
-obscura --version          # obscura 0.4.2 (3e0e567)
-obscura-gui --version      # obscura-gui 0.4.2 (3e0e567)
+obscura --version          # obscura 0.4.3 (3e0e567)
+obscura-gui --version      # obscura-gui 0.4.3 (3e0e567)
 ```
 
 Check it before reporting a bug: an installed binary does not update when the

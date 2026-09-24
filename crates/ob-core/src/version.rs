@@ -1,9 +1,9 @@
 //! What build is this?
 //!
 //! Both binaries answer with [`LONG`], so a bug report identifies the exact
-//! commit rather than the release-wide `0.4.2` that every build shares.
+//! commit rather than the release-wide `0.4.3` that every build shares.
 
-/// The crate version from `Cargo.toml` (`0.4.2`).
+/// The crate version from `Cargo.toml` (`0.4.3`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `git describe` of the checkout this was built from — a short commit hash,
@@ -11,7 +11,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// built without a repository (a source tarball).
 pub const GIT: &str = env!("OB_GIT_DESCRIBE");
 
-/// Version and commit together, e.g. `0.4.2 (3e0e567)` — what `--version`
+/// Version and commit together, e.g. `0.4.3 (3e0e567)` — what `--version`
 /// prints.
 pub const LONG: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -33,7 +33,7 @@ mod tests {
 
     #[test]
     fn git_is_never_empty() {
-        // An empty commit field would render as `0.4.2 ()`, which looks like a
+        // An empty commit field would render as `0.4.3 ()`, which looks like a
         // bug in the version string rather than a build without a repository.
         assert!(!GIT.is_empty());
     }
