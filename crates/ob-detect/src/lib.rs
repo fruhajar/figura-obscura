@@ -14,7 +14,7 @@ pub mod preprocess;
 pub mod session;
 pub mod tile;
 
-use ob_core::geometry::{Detection, Frame};
+use ob_core::geometry::{Detection, Frame, Region};
 use ob_core::registry::ModelEntry;
 use ob_core::settings::SettingValues;
 use ob_core::taxonomy::Category;
@@ -27,6 +27,54 @@ pub trait Detector: Send + Sync {
     /// Run detection on a single frame, returning canonical detections in
     /// original-image pixel coordinates.
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError>;
+
+    /// Run detection over several sub-windows of one frame, returning every
+    /// pass's detections in **frame** coordinates, un-suppressed.
+    ///
+    /// This exists because tiled detection asks the same model the same
+    /// question a dozen times per frame, and doing that one window at a time
+    /// leaves most of the available work on the floor: each pass pays the full
+    /// per-run overhead on an input too small to spread across a modern core
+    /// count. An implementation backed by a graph with a dynamic batch axis can
+    /// answer the whole grid in one run — see [`session::OnnxDetector`].
+    ///
+    /// The default implementation is exactly the loop this replaced: crop each
+    /// window, detect, offset the results. Every existing detector and test
+    /// double therefore keeps working unchanged, and a model whose export fixes
+    /// the batch size falls back to it.
+    ///
+    /// NMS is deliberately *not* applied here. Merging the passes is the
+    /// caller's job, because only the caller knows whether these windows are a
+    /// tile grid to be reconciled or independent questions.
+    fn detect_regions(
+        &self,
+        frame: &Frame,
+        windows: &[Region],
+    ) -> Result<Vec<Detection>, DetectError> {
+        let mut all = Vec::new();
+        for w in windows {
+            let Some(w) = w.clamped(frame.width, frame.height) else {
+                continue;
+            };
+            // The whole-frame window is the common case and needs no copy.
+            let dets = if w == Region::whole(frame) {
+                self.detect(frame)?
+            } else {
+                let Some(sub) = frame.crop(w.x, w.y, w.w, w.h) else {
+                    continue;
+                };
+                self.detect(&sub)?
+            };
+            all.extend(dets.into_iter().map(|mut d| {
+                d.bbox.x1 += w.x as f32;
+                d.bbox.x2 += w.x as f32;
+                d.bbox.y1 += w.y as f32;
+                d.bbox.y2 += w.y as f32;
+                d
+            }));
+        }
+        Ok(all)
+    }
 
     /// Whether this detector is *capable* of emitting `category` at all.
     ///

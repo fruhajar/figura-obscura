@@ -16,7 +16,7 @@ use ob_core::geometry::{Detection, Frame};
 use ob_core::profile::{OnDetectFailure, Profile};
 use ob_detect::Detector;
 use ob_media::video::{FfmpegSampler, FfmpegSink, FfmpegSource, VideoEncodeOpts};
-use ob_media::{classify, load_image, save_image, FrameSink, FrameSource, MediaKind};
+use ob_media::{classify, load_image, save_image_owned, FrameSink, FrameSource, MediaKind};
 use ob_track::{TrackConfig, Tracker};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -208,12 +208,7 @@ pub fn censor_frame(
 ) -> Result<usize, JobError> {
     match detector.detect(frame) {
         Ok(dets) => {
-            let selected: Vec<_> = profile
-                .filter
-                .select_all(&dets)
-                .into_iter()
-                .copied()
-                .collect();
+            let selected = profile.filter.select_owned(&dets);
             apply_censor(frame, &selected, &profile.censor)?;
             Ok(selected.len())
         }
@@ -237,9 +232,7 @@ fn apply_detect_failure(
         OnDetectFailure::Skip => Err(JobError::FailClosedSkip(error.to_string())),
         OnDetectFailure::Blank => {
             // Fail-closed: obliterate the whole frame rather than risk a leak.
-            for b in frame.data.iter_mut() {
-                *b = 0;
-            }
+            frame.data.fill(0);
             Ok(1)
         }
     }
@@ -257,7 +250,9 @@ fn process_image(
         if let Some(parent) = output.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        save_image(&frame, output)?;
+        // The frame is not needed after this, so hand the encoder its buffer
+        // rather than a copy of it.
+        save_image_owned(frame, output)?;
     }
     Ok(regions)
 }
@@ -302,7 +297,7 @@ fn process_video(
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let mut source = FfmpegSource::open(input)?;
+    let source = FfmpegSource::open(input)?;
     let info = source.info().clone();
     let mut sink = Box::new(FfmpegSink::create(
         output,
@@ -310,55 +305,171 @@ fn process_video(
         &info,
         cfg.video_opts.clone(),
     )?);
-    let mut tracker = Tracker::new(cfg.track);
 
-    let mut total = 0usize;
-    let mut idx: u32 = 0;
+    let result = run_video_pipeline(source, &mut sink, &info, cfg, detector);
+
+    match result {
+        Ok(total) => {
+            if let Err(e) = sink.finish() {
+                let _ = std::fs::remove_file(output);
+                return Err(e.into());
+            }
+            Ok(total)
+        }
+        Err(e) => {
+            // Whatever the encoder managed to write is not a censored copy of
+            // anything, and an output folder containing it invites someone to
+            // publish it. Dropping the sink kills ffmpeg rather than letting it
+            // see a clean EOF and finalise a truncated file.
+            drop(sink);
+            let _ = std::fs::remove_file(output);
+            Err(e)
+        }
+    }
+}
+
+/// One frame on its way through the pipeline, with whatever the detector had
+/// to say about it. `detections` is `None` on a frame the detector skipped —
+/// which is a different thing from an empty vec, and the tracker treats it so.
+struct Staged {
+    frame: Frame,
+    detections: Option<Vec<Detection>>,
+}
+
+/// Frames in flight per pipeline stage.
+///
+/// Bounded by *bytes* rather than by a frame count. The point of a queue here
+/// is to let one stage run ahead of the next, but a frame is 6 MB at 1080p and
+/// 24 MB at 2160p, so a depth that is comfortable at one resolution is most of
+/// a gigabyte at the other. Sizing by count is the mistake the GIF encoder used
+/// to make, and it ended with the machine in swap.
+fn pipeline_depth(width: u32, height: u32) -> usize {
+    /// Total in-flight frame memory to allow across both queues.
+    const BUDGET: usize = 128 * 1024 * 1024;
+    let frame = (width as usize * height as usize * 3).max(1);
+    ((BUDGET / 2) / frame).clamp(1, 4)
+}
+
+/// Decode, detect, and censor-plus-encode a video as three concurrent stages.
+///
+/// The serial version did all three in one loop, so while inference ran both
+/// ffmpeg processes sat idle and vice versa — on a GPU build, where inference
+/// is comparatively quick, that left the device at a fraction of its capacity
+/// and the run bounded by codec work that was not overlapping with anything.
+///
+/// ```text
+///   decode    │ f1 │ f2 │ f3 │ f4 │
+///   detect    │    │ f1 │ f2 │ f3 │
+///   censor+   │    │    │ f1 │ f2 │
+///   encode
+/// ```
+///
+/// Three stages and not more, because of what is and is not order-dependent.
+/// Detection is per-frame and stateless, so it could be widened further. The
+/// tracker is neither: it carries state from frame to frame, and feeding it out
+/// of order would change which regions get censored. So tracking, censoring and
+/// encoding stay one ordered stage, and the queues between stages preserve
+/// decode order end to end.
+///
+/// Output is unchanged by this. The tracker sees the same frames in the same
+/// order with the same detections, and the encoder receives the same bytes.
+fn run_video_pipeline(
+    mut source: FfmpegSource,
+    sink: &mut FfmpegSink,
+    info: &ob_media::video::VideoInfo,
+    cfg: &JobConfig,
+    detector: &dyn Detector,
+) -> Result<usize, JobError> {
+    use std::sync::mpsc::sync_channel;
+
+    let depth = pipeline_depth(info.width, info.height);
     let every = cfg.detect_every.max(1);
-    while let Some(mut frame) = source.next_frame()? {
-        // A single long video would otherwise ignore cancellation entirely.
-        // The partially written output is discarded by the caller's error
-        // path, so a cancelled encode never leaves a playable-looking truncated
-        // file that might be mistaken for a finished censored copy.
-        if cfg.cancel.is_cancelled() {
-            // Dropping the sink kills the encoder instead of letting it
-            // finalise (see `FfmpegSink::drop`), then the partial file goes.
-            drop(sink);
-            let _ = std::fs::remove_file(output);
-            return Err(JobError::Cancelled);
+
+    std::thread::scope(|scope| {
+        let (raw_tx, raw_rx) = sync_channel::<Result<(u32, Frame), JobError>>(depth);
+        let (det_tx, det_rx) = sync_channel::<Result<Staged, JobError>>(depth);
+
+        // --- Stage 1: decode ---------------------------------------------
+        // A send that fails means a later stage has gone away, which is how
+        // cancellation and errors propagate backwards: the receiver is dropped,
+        // this notices, and the `FfmpegSource`'s own `Drop` reaps the decoder.
+        scope.spawn(move || {
+            let mut idx: u32 = 0;
+            loop {
+                if cfg.cancel.is_cancelled() {
+                    break;
+                }
+                match source.next_frame() {
+                    Ok(Some(frame)) => {
+                        if raw_tx.send(Ok((idx, frame))).is_err() {
+                            break;
+                        }
+                        idx = idx.wrapping_add(1);
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = raw_tx.send(Err(e.into()));
+                        break;
+                    }
+                }
+            }
+        });
+
+        // --- Stage 2: detect ---------------------------------------------
+        // Every Nth frame goes through the model; the rest pass straight
+        // through for the tracker to coast over, exactly as before.
+        scope.spawn(move || {
+            for item in raw_rx {
+                let staged = match item {
+                    Err(e) => Err(e),
+                    Ok((idx, frame)) => {
+                        if idx % every == 0 {
+                            match detector.detect(&frame) {
+                                Ok(d) => Ok(Staged {
+                                    frame,
+                                    detections: Some(d),
+                                }),
+                                Err(e) => Err(e.into()),
+                            }
+                        } else {
+                            Ok(Staged {
+                                frame,
+                                detections: None,
+                            })
+                        }
+                    }
+                };
+                let failed = staged.is_err();
+                if det_tx.send(staged).is_err() || failed {
+                    break;
+                }
+            }
+        });
+
+        // --- Stage 3: track, censor, encode (this thread) ----------------
+        // Ordered and sequential: the tracker's state and the encoder's input
+        // both depend on frames arriving in decode order.
+        let mut tracker = Tracker::new(cfg.track);
+        let mut total = 0usize;
+        for item in det_rx {
+            // Stopping between frames is what makes cancellation safe: the
+            // caller discards the partial file, so a cancelled encode never
+            // leaves a playable-looking truncated copy behind.
+            if cfg.cancel.is_cancelled() {
+                return Err(JobError::Cancelled);
+            }
+            let Staged {
+                mut frame,
+                detections,
+            } = item?;
+            let smoothed = tracker.update(detections.as_deref());
+            let selected = cfg.profile.filter.select_owned(&smoothed);
+            apply_censor(&mut frame, &selected, &cfg.profile.censor)?;
+            total += selected.len();
+            sink.put_frame(&frame)?;
         }
-        // Detect on every Nth frame; coast the tracker on the others.
-        let raw = if idx % every == 0 {
-            Some(detector.detect(&frame)?)
-        } else {
-            None
-        };
-        let smoothed = tracker.update(raw.as_deref());
-        let selected: Vec<_> = cfg
-            .profile
-            .filter
-            .select_all(&smoothed)
-            .into_iter()
-            .copied()
-            .collect();
-        apply_censor(&mut frame, &selected, &cfg.profile.censor)?;
-        total += selected.len();
-        // Same reasoning as the cancel path above: whatever the encoder
-        // managed to write before it died is not a censored copy of anything,
-        // and an output folder that contains it invites someone to publish it.
-        // A failed `.webm` used to leave a zero-byte file behind exactly here.
-        if let Err(e) = sink.put_frame(&frame) {
-            drop(sink);
-            let _ = std::fs::remove_file(output);
-            return Err(e.into());
-        }
-        idx += 1;
-    }
-    if let Err(e) = sink.finish() {
-        let _ = std::fs::remove_file(output);
-        return Err(e.into());
-    }
-    Ok(total)
+        Ok(total)
+    })
 }
 
 /// Preview one file's detections/censoring without touching disk — used by the
@@ -446,12 +557,7 @@ pub fn preview_compose(src: &PreviewSource, profile: &Profile) -> Result<Preview
     let mut censored = src.frame.clone();
     let regions = match &src.detect_error {
         None => {
-            let selected: Vec<_> = profile
-                .filter
-                .select_all(&src.detections)
-                .into_iter()
-                .copied()
-                .collect();
+            let selected = profile.filter.select_owned(&src.detections);
             apply_censor(&mut censored, &selected, &profile.censor)?;
             selected.len()
         }
@@ -1038,6 +1144,158 @@ mod tests {
         // stream should have come through untouched.
         assert!(info.has_audio, "the source audio was lost");
         assert_eq!(info.audio_codec.as_deref(), Some("vorbis"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pipeline_queue_is_bounded_by_bytes_not_by_frames() {
+        // A depth that is comfortable at 720p is most of a gigabyte at 2160p.
+        // Sizing the queue by frame count is how the GIF encoder used to walk
+        // the machine into swap, and the fix must not reintroduce it.
+        let depth_720 = pipeline_depth(1280, 720);
+        let depth_4k = pipeline_depth(3840, 2160);
+        let depth_8k = pipeline_depth(7680, 4320);
+
+        assert!(
+            depth_720 >= depth_4k,
+            "a smaller frame should buffer no less"
+        );
+        assert!(depth_4k >= depth_8k);
+        // Always at least one, or the pipeline cannot make progress at all.
+        for (w, h) in [(7680u32, 4320u32), (16000, 16000), (1, 1)] {
+            assert!(pipeline_depth(w, h) >= 1, "{w}x{h} produced a zero depth");
+        }
+        // And never unbounded: two queues at this depth must stay inside the
+        // budget the function documents.
+        let bytes = |w: u32, h: u32| pipeline_depth(w, h) * 2 * (w as usize * h as usize * 3);
+        for (w, h) in [(1280u32, 720u32), (1920, 1080), (3840, 2160)] {
+            assert!(
+                bytes(w, h) <= 128 * 1024 * 1024,
+                "{w}x{h} would hold {} bytes in flight",
+                bytes(w, h)
+            );
+        }
+    }
+
+    /// A detector that counts calls, and can cancel or fail partway through.
+    struct ScriptedDetector {
+        seen: std::sync::Arc<AtomicUsize>,
+        /// Cancel this token once `trigger_after` frames have been seen.
+        cancel: Option<CancelToken>,
+        /// Return an error once `trigger_after` frames have been seen.
+        fail: bool,
+        trigger_after: usize,
+    }
+
+    impl Detector for ScriptedDetector {
+        fn detect(&self, _f: &Frame) -> Result<Vec<Detection>, ob_detect::DetectError> {
+            let n = self.seen.fetch_add(1, Ordering::SeqCst) + 1;
+            if n >= self.trigger_after {
+                if let Some(c) = &self.cancel {
+                    c.cancel();
+                }
+                if self.fail {
+                    return Err(ob_detect::DetectError::Inference("scripted failure".into()));
+                }
+            }
+            Ok(vec![genitalia_det()])
+        }
+    }
+
+    #[test]
+    fn a_video_keeps_every_frame_through_the_pipeline() {
+        // Three stages and two queues between them is three places a frame can
+        // be dropped or duplicated. The count has to survive the trip exactly.
+        let Some(clip) = a_test_clip("pipeline-frames") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let before = ob_media::video::probe(&clip).unwrap().frame_count;
+
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &clip, &out);
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.failed, 0);
+
+        let written = out.join("clip.mp4");
+        assert!(written.exists(), "no output written");
+        let after = ob_media::video::probe(&written).unwrap().frame_count;
+        if let (Some(b), Some(a)) = (before, after) {
+            assert_eq!(a, b, "frame count changed passing through the pipeline");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cancelling_mid_video_leaves_no_output_behind() {
+        // The property the serial loop guaranteed and the pipeline must keep: a
+        // cancelled encode never leaves a playable-looking truncated file that
+        // could be mistaken for a finished censored copy. Now that the stages
+        // run concurrently, the cancel is observed on a different thread from
+        // the one decoding, which is exactly where this could regress.
+        let Some(clip) = a_test_clip("pipeline-cancel") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &clip, &out);
+        let d = ScriptedDetector {
+            seen: std::sync::Arc::new(AtomicUsize::new(0)),
+            cancel: Some(cfg.cancel.clone()),
+            fail: false,
+            trigger_after: 3,
+        };
+
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        // A cancelled run is not a failed one.
+        assert_eq!(summary.failed, 0, "cancellation reported as a failure");
+        assert!(summary.cancelled);
+        assert!(
+            !out.join("clip.mp4").exists(),
+            "a cancelled encode left a partial file behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_detector_failure_mid_video_removes_the_partial_output() {
+        // Same guarantee on the error path. The failure now surfaces from the
+        // detect stage through a channel rather than from a `?` in the loop, so
+        // it is worth pinning that it still reaches the caller and still takes
+        // the half-written file with it.
+        let Some(clip) = a_test_clip("pipeline-detect-fail") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let out = dir.join("out");
+        let profile = Profile {
+            // PassThrough would swallow it; this test is about the error path.
+            on_detect_failure: OnDetectFailure::PassThrough,
+            ..Default::default()
+        };
+        let cfg = job_cfg(&profile, &clip, &out);
+        let d = ScriptedDetector {
+            seen: std::sync::Arc::new(AtomicUsize::new(0)),
+            cancel: None,
+            fail: true,
+            trigger_after: 3,
+        };
+
+        let summary = run(&cfg, &d, &|_| {}).unwrap();
+        assert_eq!(summary.failed, 1, "the detector failure did not surface");
+        assert!(
+            !out.join("clip.mp4").exists(),
+            "a failed encode left a partial file behind"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

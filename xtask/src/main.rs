@@ -1,9 +1,11 @@
 //! `cargo xtask` — build-time asset generation for Figura Obscura.
 //!
-//! Currently one task: `icons`, which renders the app icon set into
-//! `packaging/assets/`. Those files are committed, so a normal build never
-//! needs to run this; re-run it only when the mark itself changes.
+//! Two tasks. `icons` renders the app icon set into `packaging/assets/`; those
+//! files are committed, so a normal build never needs it — re-run it only when
+//! the mark itself changes. `bench` times the shipped CLI over a generated
+//! corpus, which is how a performance claim about this repo gets a number.
 
+mod bench;
 mod icns;
 mod icon;
 
@@ -24,9 +26,14 @@ fn main() -> Result<()> {
     let task = std::env::args().nth(1);
     match task.as_deref() {
         Some("icons") => generate_icons(&repo_root()?),
-        Some(other) => bail!("unknown task `{other}` (known tasks: icons)"),
+        Some("bench") => bench::run(&repo_root()?, std::env::args().nth(2)),
+        Some(other) => bail!("unknown task `{other}` (known tasks: icons, bench)"),
         None => {
-            eprintln!("usage: cargo xtask <task>\n\ntasks:\n  icons   regenerate packaging/assets/ app icons");
+            eprintln!(
+                "usage: cargo xtask <task>\n\ntasks:\n  \
+                 icons           regenerate packaging/assets/ app icons\n  \
+                 bench [binary]  time the pipeline over a generated corpus"
+            );
             Ok(())
         }
     }

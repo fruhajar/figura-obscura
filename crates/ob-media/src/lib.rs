@@ -53,8 +53,22 @@ pub fn load_image(path: &Path) -> Result<Frame, MediaError> {
 }
 
 /// Encode an RGB8 [`Frame`] to an image file (format inferred from extension).
+///
+/// Copies the buffer, because the caller keeps its frame. The batch pipeline
+/// does not — it is finished with the frame at this point — so it should use
+/// [`save_image_owned`] and skip a full-resolution memcpy per file.
 pub fn save_image(frame: &Frame, path: &Path) -> Result<(), MediaError> {
-    let img = RgbImage::from_raw(frame.width, frame.height, frame.data.clone())
+    save_image_owned(frame.clone(), path)
+}
+
+/// As [`save_image`], consuming the frame so its buffer can be handed straight
+/// to the encoder.
+///
+/// At 4K that is twenty-four megabytes per image not copied; over a batch of a
+/// few thousand it is the difference between a memcpy being invisible and it
+/// being a measurable share of the run.
+pub fn save_image_owned(frame: Frame, path: &Path) -> Result<(), MediaError> {
+    let img = RgbImage::from_raw(frame.width, frame.height, frame.data)
         .ok_or_else(|| MediaError::Encode(path.display().to_string(), "buffer size".into()))?;
     img.save(path)
         .map_err(|e| MediaError::Encode(path.display().to_string(), e.to_string()))

@@ -7,9 +7,9 @@
 //! tested without a real model.
 
 use crate::postprocess::{map_label, nms};
-use crate::preprocess::{letterbox_chw_with, Letterbox, Resampler};
+use crate::preprocess::{letterbox_batch, Resampler};
 use crate::{DetectError, Detector, ExecProvider};
-use ob_core::geometry::{BBox, Detection, Frame};
+use ob_core::geometry::{BBox, Detection, Frame, Region};
 use ob_core::registry::{LabelMap, ModelEntry};
 use ob_core::settings::SettingValues;
 use ob_core::taxonomy::Category;
@@ -17,7 +17,7 @@ use ort::execution_providers::ExecutionProviderDispatch;
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use ort::value::Tensor;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 /// A loaded ONNX detector bound to one model entry and its resolved settings.
 pub struct OnnxDetector {
@@ -40,13 +40,190 @@ pub struct OnnxDetector {
     /// Kernel used to scale frames into model input space. See
     /// [`Resampler`] — the default is deliberately not nearest-neighbour.
     resampler: Resampler,
-    /// The ONNX Runtime session. `Session::run` takes `&mut self`, but the
-    /// batch engine shares one `Detector` across rayon worker threads via
-    /// `&dyn Detector`, so the session is guarded by a `Mutex`. ORT serializes
-    /// concurrent `Run` calls on one session internally regardless, so this
-    /// costs nothing real while keeping `OnnxDetector: Send + Sync`.
-    session: Mutex<Session>,
+    /// Most windows this detector will feed through the graph in one run.
+    ///
+    /// Zero or one means the model's export fixed its batch axis, so every
+    /// window has to go on its own and [`Detector::detect_regions`] falls back
+    /// to the default per-window loop.
+    batch_limit: usize,
+    /// The ONNX Runtime sessions. See [`SessionPool`] for why there is more
+    /// than one.
+    pool: SessionPool,
 }
+
+/// How many windows are fed through the graph in a single run, by default.
+///
+/// **One**, which is to say: off. This is a measured result and it went against
+/// expectation. Feeding a tile grid to the graph as a batch is the obvious
+/// optimisation — one run instead of thirteen, each paying the per-run overhead
+/// once — and on the ONNX Runtime CPU provider it is consistently *slower*,
+/// monotonically worse as the batch grows, at every session and thread count
+/// tried. The CPU kernels already spread one inference across the intra-op
+/// threads, and a batched tensor buys no extra parallelism while costing cache
+/// locality and a much larger transient allocation. The numbers are in
+/// `docs/PERFORMANCE.md`.
+///
+/// The machinery is kept because the reasoning that motivated it still holds
+/// for a GPU, where per-launch overhead dominates and wide batches are the
+/// normal way to feed one. That is unverified here — this environment has no
+/// GPU — so it is not a default anybody gets by accident. A GPU user can try it
+/// with `OBSCURA_MAX_BATCH=8` and measure.
+const MAX_BATCH: usize = 1;
+
+/// The ceiling on `OBSCURA_MAX_BATCH`, so a typo cannot ask for a tensor that
+/// will not fit. Sixteen windows of a 640px model is 78 MB.
+const BATCH_CEILING: usize = 16;
+
+/// A small pool of identical ONNX Runtime sessions.
+///
+/// `Session::run` takes `&mut self`, and the batch engine shares one `Detector`
+/// across rayon workers via `&dyn Detector`, so a session has to be guarded.
+/// A single `Mutex<Session>` was the obvious guard — and the reason
+/// `images.par_iter()` never actually ran inference in parallel: every worker
+/// queued on the same lock, so a twelve-core machine did image decode and
+/// censoring twelve ways and inference one way. ONNX Runtime does serialise
+/// concurrent `Run` calls on one session internally, which is precisely why the
+/// fix is to hold more than one session rather than a cleverer lock.
+struct SessionPool {
+    free: Mutex<Vec<Session>>,
+    returned: Condvar,
+}
+
+impl SessionPool {
+    fn new(sessions: Vec<Session>) -> Self {
+        Self {
+            free: Mutex::new(sessions),
+            returned: Condvar::new(),
+        }
+    }
+
+    /// Take a session, waiting if every one is busy. The lease returns it on
+    /// drop, including when the run between them panics or errors out.
+    fn checkout(&self) -> Result<Lease<'_>, DetectError> {
+        let mut free = self
+            .free
+            .lock()
+            .map_err(|_| DetectError::Inference("detector session pool poisoned".into()))?;
+        loop {
+            if let Some(session) = free.pop() {
+                return Ok(Lease {
+                    pool: self,
+                    session: Some(session),
+                });
+            }
+            free = self
+                .returned
+                .wait(free)
+                .map_err(|_| DetectError::Inference("detector session pool poisoned".into()))?;
+        }
+    }
+}
+
+/// One checked-out session, returned to the pool when dropped.
+struct Lease<'a> {
+    pool: &'a SessionPool,
+    session: Option<Session>,
+}
+
+impl std::ops::Deref for Lease<'_> {
+    type Target = Session;
+    fn deref(&self) -> &Session {
+        self.session.as_ref().expect("lease holds a session")
+    }
+}
+
+impl std::ops::DerefMut for Lease<'_> {
+    fn deref_mut(&mut self) -> &mut Session {
+        self.session.as_mut().expect("lease holds a session")
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            // A poisoned pool still has to take the session back, or the pool
+            // bleeds capacity and eventually every worker blocks forever.
+            let mut free = self.pool.free.lock().unwrap_or_else(|e| e.into_inner());
+            free.push(session);
+            self.pool.returned.notify_one();
+        }
+    }
+}
+
+/// How a detector's CPU budget is split between concurrent sessions.
+///
+/// The two numbers cannot be chosen separately, which is the trap this exists
+/// to avoid. ONNX Runtime gives **each** session an intra-op thread pool sized
+/// to the machine by default, so simply holding four sessions on a twelve-core
+/// box asks for forty-eight compute threads plus the batch engine's own
+/// workers. Measured, that was slower than the single serialised session it
+/// replaced — the image cases regressed by a third — because the cores spent
+/// their time changing their minds about what to run.
+///
+/// So the budget is divided rather than multiplied: `sessions × intra_threads`
+/// stays at roughly the core count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ThreadPlan {
+    /// Sessions held in the pool, so that many detections can be in flight.
+    sessions: usize,
+    /// Intra-op threads each session gets. `None` leaves ONNX Runtime's own
+    /// default alone, which is what a GPU provider wants.
+    intra_threads: Option<usize>,
+}
+
+fn thread_plan(provider: ExecProvider) -> ThreadPlan {
+    // One session for a GPU: the work is already parallel on the device, a
+    // second would duplicate the model in VRAM for nothing, and the host-side
+    // thread count is not what limits it.
+    if provider.is_gpu() {
+        return ThreadPlan {
+            sessions: 1,
+            intra_threads: None,
+        };
+    }
+    // Physical cores, deliberately not logical ones. Inference is compute
+    // bound, so the two hyperthreads sharing a core contend for the same
+    // execution units rather than adding throughput: budgeting from the
+    // logical count handed every session twice the threads it wanted and was
+    // measurably slower than doing nothing at all.
+    let cores = num_cpus::get_physical().max(1);
+    // Overridable because "how much of this machine may it have" is a question
+    // about the machine, not about the model — someone sharing a build box or
+    // pinning a container needs to answer it themselves.
+    let sessions = env_usize("OBSCURA_SESSIONS")
+        .unwrap_or(DEFAULT_CPU_SESSIONS)
+        .clamp(1, cores);
+    // Deliberately less than the whole machine. Inference is not all a run
+    // does: every image is also decoded and re-encoded, and those happen on the
+    // batch engine's own workers at the same time. Budgeting every core to the
+    // model starved that half of the pipeline — the untiled case, which is
+    // mostly decode, got *slower* — so about a third of the cores are left for
+    // it. Measured on a six-core machine; the overrides exist because the right
+    // split depends on the machine and on what else is running.
+    let intra = env_usize("OBSCURA_INTRA_THREADS").unwrap_or((cores / 3).max(1));
+    ThreadPlan {
+        sessions,
+        intra_threads: Some(intra),
+    }
+}
+
+/// A positive `usize` from the environment, or `None`.
+fn env_usize(key: &str) -> Option<usize> {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+}
+
+/// Concurrent CPU sessions by default.
+///
+/// Two, by measurement rather than by argument — see `docs/PERFORMANCE.md`. A
+/// detection model this small parallelises poorly across many intra-op threads,
+/// so a second narrow session beats one wide one; a third and fourth did not
+/// help and eventually hurt, because a worker waiting for a session is a worker
+/// not decoding the next image. Clamped to the physical core count so a
+/// single-core machine gets one.
+const DEFAULT_CPU_SESSIONS: usize = 2;
 
 /// Map Obscura's ordered EP preference to `ort` execution-provider dispatches.
 ///
@@ -236,27 +413,73 @@ fn build_session(
     ))
 }
 
-/// Read the model's real square input side from its graph, if it declares one.
+/// Build one more session on a provider already known to work.
+///
+/// Used to fill the pool after [`build_session`] has settled which provider
+/// takes. Repeating the probing for each would mean rebuilding and discarding a
+/// session per failed candidate per pool slot, for an answer already known.
+fn build_session_on(
+    model_path: &PathBuf,
+    provider: ExecProvider,
+    intra_threads: Option<usize>,
+) -> Result<Session, String> {
+    let dispatch = execution_provider_dispatches()
+        .into_iter()
+        .find(|(p, _)| *p == provider)
+        .map(|(_, d)| d)
+        .ok_or_else(|| format!("{provider} is not compiled into this build"))?;
+    Session::builder()
+        .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
+        .and_then(|b| match intra_threads {
+            Some(n) => b.with_intra_threads(n),
+            None => Ok(b),
+        })
+        .and_then(|b| b.with_execution_providers([dispatch]))
+        .and_then(|b| b.commit_from_file(model_path))
+        .map_err(|e| e.to_string())
+}
+
+/// Read what the model's graph declares about its input: the square side, and
+/// whether its batch axis is dynamic.
 ///
 /// A YOLOv8 export usually bakes a fixed `[1, 3, H, W]` input shape in, and a
 /// registry entry stating a different `input_size` would either fail the run
 /// outright or feed the model a resolution it was never trained for. Dynamic
 /// axes come back as `-1`, in which case there is nothing to learn and the
 /// registry's value stands.
-fn declared_input_size(session: &Session) -> Option<u32> {
-    let input = session.inputs.first()?;
+fn declared_input_shape(session: &Session) -> DeclaredInput {
+    let mut out = DeclaredInput {
+        side: None,
+        batchable: false,
+    };
+    let Some(input) = session.inputs.first() else {
+        return out;
+    };
     let ort::value::ValueType::Tensor { shape, .. } = &input.input_type else {
-        return None;
+        return out;
     };
     if shape.len() != 4 {
-        return None;
+        return out;
     }
     let (h, w) = (shape[2], shape[3]);
     if h > 0 && w > 0 && h == w {
-        Some(h as u32)
-    } else {
-        None
+        out.side = Some(h as u32);
     }
+    // A symbolic or unspecified axis comes back non-positive, and that is the
+    // only case where feeding the graph more than one window at a time is
+    // sound. An export that pinned `batch` to a number — common enough in older
+    // YOLO exports — would fail the run outright, so it takes the per-window
+    // path instead.
+    out.batchable = shape[0] <= 0;
+    out
+}
+
+/// What the model's graph says about its own input tensor.
+struct DeclaredInput {
+    /// The square input side, when the graph fixes one.
+    side: Option<u32>,
+    /// Whether the batch axis is dynamic, so several windows can go in one run.
+    batchable: bool,
 }
 
 impl OnnxDetector {
@@ -272,7 +495,7 @@ impl OnnxDetector {
         }
         let get = |k: &str, d: f64| settings.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
 
-        let (session, execution_provider, ep_notes) = build_session(entry, &model_path)?;
+        let (session, execution_provider, mut ep_notes) = build_session(entry, &model_path)?;
         // YOLOv8 exports use a single image input; read its real name so we bind
         // by name rather than assuming "images".
         let input_name = session
@@ -283,13 +506,59 @@ impl OnnxDetector {
 
         // Trust the model file over the registry: a mis-stated input_size would
         // otherwise surface as an opaque ORT shape error at the first run.
-        let input_size = declared_input_size(&session).unwrap_or(entry.input_size);
+        let declared = declared_input_shape(&session);
+        let input_size = declared.side.unwrap_or(entry.input_size);
+        let batch_limit = if declared.batchable {
+            env_usize("OBSCURA_MAX_BATCH")
+                .unwrap_or(MAX_BATCH)
+                .min(BATCH_CEILING)
+        } else {
+            1
+        };
 
         let resampler = settings
             .get("resample")
             .and_then(|v| v.as_str())
             .and_then(Resampler::parse)
             .unwrap_or_default();
+
+        // Fill the pool on the provider that already took.
+        //
+        // The probing session is kept only when the plan asks for ONNX
+        // Runtime's default threading, because that is what it was built with.
+        // Where the plan divides the budget it has to be rebuilt: a session's
+        // thread count is fixed at construction, and keeping one wide session
+        // alongside three narrow ones is the oversubscription this is here to
+        // avoid, in miniature.
+        let plan = thread_plan(execution_provider);
+        let mut sessions = Vec::with_capacity(plan.sessions);
+        if plan.intra_threads.is_none() {
+            sessions.push(session);
+        } else {
+            drop(session);
+        }
+        while sessions.len() < plan.sessions {
+            match build_session_on(&model_path, execution_provider, plan.intra_threads) {
+                Ok(extra) => sessions.push(extra),
+                Err(e) => {
+                    // Not fatal: a machine short of memory simply gets a
+                    // smaller pool. Worth saying, though — otherwise the only
+                    // symptom is a run quietly less parallel than the same
+                    // build on another machine.
+                    ep_notes.push(format!(
+                        "only {} concurrent {execution_provider} session(s): {e}",
+                        sessions.len()
+                    ));
+                    break;
+                }
+            }
+        }
+        if sessions.is_empty() {
+            return Err(DetectError::Load(
+                entry.id.to_string(),
+                "no usable session could be built".into(),
+            ));
+        }
 
         Ok(Self {
             model_path,
@@ -301,7 +570,8 @@ impl OnnxDetector {
             ep_notes,
             input_name,
             resampler,
-            session: Mutex::new(session),
+            batch_limit,
+            pool: SessionPool::new(sessions),
         })
     }
 
@@ -323,21 +593,26 @@ impl OnnxDetector {
         &self.ep_notes
     }
 
-    /// Run the raw model on a CHW tensor, returning the flat output tensor and
-    /// its shape. This is the only function that feeds data through `ort`.
-    fn run(&self, input_chw: &[f32]) -> Result<(Vec<f32>, Vec<usize>), DetectError> {
+    /// Run the model on `n` letterboxed windows packed into one CHW tensor and
+    /// decode each one into detections in *model* coordinates.
+    ///
+    /// This is the only function that feeds data through `ort`. It takes the
+    /// input by value because the caller built it and has no further use for
+    /// it — the previous signature borrowed a slice and immediately copied it,
+    /// which at 640px is a five-megabyte memcpy per pass for nothing.
+    ///
+    /// Decoding happens while the session is still checked out, so the output
+    /// tensor is read in place rather than copied out first. Decode is a few
+    /// tens of thousands of reads; with a pool of sessions, holding one a
+    /// fraction longer no longer blocks the other workers.
+    fn run_batch(&self, input: Vec<f32>, n: usize) -> Result<Vec<Vec<Detection>>, DetectError> {
         let size = self.input_size as usize;
-        let shape = [1_usize, 3, size, size];
-        let tensor = Tensor::from_array((shape, input_chw.to_vec()))
+        let tensor = Tensor::from_array(([n, 3, size, size], input))
             .map_err(|e| DetectError::Inference(e.to_string()))?;
 
-        // `Session::run` needs `&mut`; take the lock for the duration of the
-        // call and copy the output out before releasing it (the borrowed output
-        // view is tied to the session).
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|_| DetectError::Inference("detector session mutex poisoned".into()))?;
+        // `Session::run` needs `&mut`, hence the lease; it goes back to the
+        // pool when this scope ends, error paths included.
+        let mut session = self.pool.checkout()?;
         let outputs = session
             .run(ort::inputs![self.input_name.as_str() => tensor])
             .map_err(|e| DetectError::Inference(e.to_string()))?;
@@ -347,22 +622,24 @@ impl OnnxDetector {
             .try_extract_tensor::<f32>()
             .map_err(|e| DetectError::Inference(e.to_string()))?;
         let dims: Vec<usize> = out_shape.iter().map(|&d| d as usize).collect();
-        Ok((data.to_vec(), dims))
+        Ok((0..n).map(|b| self.decode_yolov8(data, &dims, b)).collect())
     }
 
-    /// Decode a YOLOv8 detect output `[1, 4+C, N]` into detections in *model*
-    /// coordinates, before NMS and letterbox inversion.
-    fn decode_yolov8(&self, output: &[f32], shape: &[usize]) -> Vec<Detection> {
-        // Expect [1, 4+C, N].
-        if shape.len() != 3 {
+    /// Decode batch element `b` of a YOLOv8 detect output `[B, 4+C, N]` into
+    /// detections in *model* coordinates, before NMS and letterbox inversion.
+    fn decode_yolov8(&self, output: &[f32], shape: &[usize], b: usize) -> Vec<Detection> {
+        // Expect [B, 4+C, N].
+        if shape.len() != 3 || b >= shape[0] {
             return Vec::new();
         }
         let channels = shape[1];
         let n = shape[2];
         let num_classes = channels.saturating_sub(4);
         let mut dets = Vec::new();
-        // Output is channel-major: value(c, i) = output[c*n + i].
-        let at = |c: usize, i: usize| output[c * n + i];
+        // Output is channel-major within each batch element:
+        // value(b, c, i) = output[b * channels * n + c * n + i].
+        let base = b * channels * n;
+        let at = |c: usize, i: usize| output[base + c * n + i];
         for i in 0..n {
             // Best class for box i.
             let mut best_c = 0usize;
@@ -408,20 +685,51 @@ impl Detector for OnnxDetector {
     }
 
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {
-        let (input, lb): (Vec<f32>, Letterbox) =
-            letterbox_chw_with(frame, self.input_size, self.resampler);
-        let (output, shape) = self.run(&input)?;
-        let mut dets = self.decode_yolov8(&output, &shape);
-        dets = nms(dets, self.nms_iou);
-        // Map boxes back to original-image coordinates and clamp.
-        for d in &mut dets {
-            d.bbox = lb.invert(&d.bbox);
-            d.bbox.x1 = d.bbox.x1.clamp(0.0, frame.width_f());
-            d.bbox.y1 = d.bbox.y1.clamp(0.0, frame.height_f());
-            d.bbox.x2 = d.bbox.x2.clamp(0.0, frame.width_f());
-            d.bbox.y2 = d.bbox.y2.clamp(0.0, frame.height_f());
+        // One window covering everything, then the per-window NMS a single pass
+        // has always done. `detect_regions` deliberately leaves suppression to
+        // its caller, because a tile grid has to be merged globally instead.
+        let dets = self.detect_regions(frame, &[Region::whole(frame)])?;
+        Ok(nms(dets, self.nms_iou))
+    }
+
+    /// The batched path: every window letterboxed into one tensor and pushed
+    /// through the graph in as few runs as `batch_limit` allows.
+    fn detect_regions(
+        &self,
+        frame: &Frame,
+        windows: &[Region],
+    ) -> Result<Vec<Detection>, DetectError> {
+        // Clip first, so a window hanging off an edge contributes the part that
+        // exists and the transform describes what was actually resampled.
+        let windows: Vec<Region> = windows
+            .iter()
+            .filter_map(|w| w.clamped(frame.width, frame.height))
+            .collect();
+        if windows.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(dets)
+
+        let mut all = Vec::new();
+        for chunk in windows.chunks(self.batch_limit.max(1)) {
+            let (input, boxes) = letterbox_batch(frame, chunk, self.input_size, self.resampler);
+            let per_window = self.run_batch(input, chunk.len())?;
+
+            for ((dets, lb), w) in per_window.into_iter().zip(&boxes).zip(chunk) {
+                all.extend(dets.into_iter().map(|mut d| {
+                    // Model space back to window space, clamped to the window —
+                    // a box the model pushed past the edge of a tile is not
+                    // evidence about the frame beyond it — then offset into
+                    // frame coordinates.
+                    d.bbox = lb.invert(&d.bbox);
+                    d.bbox.x1 = d.bbox.x1.clamp(0.0, w.width_f()) + w.x as f32;
+                    d.bbox.y1 = d.bbox.y1.clamp(0.0, w.height_f()) + w.y as f32;
+                    d.bbox.x2 = d.bbox.x2.clamp(0.0, w.width_f()) + w.x as f32;
+                    d.bbox.y2 = d.bbox.y2.clamp(0.0, w.height_f()) + w.y as f32;
+                    d
+                }));
+            }
+        }
+        Ok(all)
     }
 }
 

@@ -18,7 +18,7 @@
 
 use crate::postprocess::nms;
 use crate::{DetectError, Detector};
-use ob_core::geometry::{Detection, Frame};
+use ob_core::geometry::{Detection, Frame, Region};
 use ob_core::taxonomy::Category;
 
 /// When to spend the extra inference passes.
@@ -81,13 +81,10 @@ impl Default for TilingConfig {
 }
 
 /// One tile's source-pixel window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Tile {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-}
+///
+/// The same type a detector takes for any sub-window, so a planned grid can be
+/// handed straight to [`Detector::detect_regions`] with nothing in between.
+pub type Tile = Region;
 
 /// Plan the tile grid for a `frame_w × frame_h` frame and a `input_size` model.
 ///
@@ -123,12 +120,7 @@ pub fn plan_tiles(frame_w: u32, frame_h: u32, input_size: u32, cfg: &TilingConfi
                     // border is covered without a runt tile.
                     let x = ((c as f32 * step_x) as u32).min(frame_w.saturating_sub(tw as u32));
                     let y = ((r as f32 * step_y) as u32).min(frame_h.saturating_sub(th as u32));
-                    tiles.push(Tile {
-                        x,
-                        y,
-                        w: tw as u32,
-                        h: th as u32,
-                    });
+                    tiles.push(Tile::new(x, y, tw as u32, th as u32));
                 }
             }
             tiles.dedup();
@@ -204,30 +196,32 @@ impl<D: Detector> Detector for TiledDetector<D> {
     }
 
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {
-        // Pass 1: the whole frame. Always run — it is the only pass that sees
-        // large regions in full and the only one that runs when tiling is off.
-        let mut all = self.inner.detect(frame)?;
+        // The whole frame first — it is the only pass that sees large regions
+        // in full, and the only one that runs when tiling is off — then the
+        // grid. All of it goes in one call, so a detector whose graph takes a
+        // batch axis answers the lot in one or two runs instead of thirteen.
+        let mut windows = Vec::with_capacity(1 + self.cfg.max_tiles);
+        windows.push(Region::whole(frame));
+        windows.extend(self.tiles_for(frame));
 
-        for t in self.tiles_for(frame) {
-            let Some(sub) = frame.crop(t.x, t.y, t.w, t.h) else {
-                continue;
-            };
-            let dets = self.inner.detect(&sub)?;
-            // Tile-local coordinates back to frame coordinates.
-            all.extend(dets.into_iter().map(|mut d| {
-                d.bbox.x1 += t.x as f32;
-                d.bbox.x2 += t.x as f32;
-                d.bbox.y1 += t.y as f32;
-                d.bbox.y2 += t.y as f32;
-                d
-            }));
-        }
+        let all = self.inner.detect_regions(frame, &windows)?;
 
         // One global NMS over every pass. Note this keeps a box that a tile saw
         // only partially (cut at a seam) alongside the full box from the
         // overlapping neighbour when their IoU is low — for censoring, covering
         // a region twice is harmless and covering it not at all is not.
         Ok(nms(all, self.nms_iou))
+    }
+
+    /// Tiling is about which windows of *this* frame get looked at; a caller
+    /// that already knows its own windows is asking a different question, so
+    /// this forwards rather than expanding each one into its own grid.
+    fn detect_regions(
+        &self,
+        frame: &Frame,
+        windows: &[Region],
+    ) -> Result<Vec<Detection>, DetectError> {
+        self.inner.detect_regions(frame, windows)
     }
 }
 

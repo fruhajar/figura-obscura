@@ -33,6 +33,8 @@ use crate::expand::MediaItem;
 use ob_core::cancel::CancelToken;
 use ob_detect::tile::{tiles_for_size, TilingConfig};
 use ob_media::MediaKind;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Cost of decoding and re-encoding one video frame, relative to one inference
@@ -147,24 +149,57 @@ pub struct ItemCost {
 /// The measured shape of a batch.
 #[derive(Debug, Clone, Default)]
 pub struct Workload {
-    pub items: Vec<ItemCost>,
+    /// Private because it is half of a pair: every item is also indexed by path
+    /// in `by_path`, and a caller pushing straight onto the vector would leave
+    /// the two disagreeing — which shows up not as a crash but as a progress
+    /// bar that silently stops moving. Read it through [`Workload::items`],
+    /// add to it through [`Workload::push`].
+    items: Vec<ItemCost>,
     /// Sum of `work` over every item whose size is known well enough to cost.
     pub total_work: f64,
     pub images: usize,
     pub videos: usize,
     /// Videos of unknown length, excluded from `total_work`.
     pub unknown: usize,
+    /// `items` again, keyed by path. See [`Workload::work_for`].
+    by_path: HashMap<PathBuf, f64>,
 }
 
 impl Workload {
+    /// Every costed item, in scan order.
+    pub fn items(&self) -> &[ItemCost] {
+        &self.items
+    }
+
+    /// Record one costed item, keeping the by-path index in step and adding its
+    /// work to the total.
+    ///
+    /// The single way to grow a `Workload`, so the index cannot fall behind the
+    /// list. A batch may legitimately name the same file twice; the first
+    /// costing wins, matching what a linear search over `items` would find.
+    pub fn push(&mut self, item: ItemCost) {
+        self.total_work += item.work;
+        self.by_path.entry(item.path.clone()).or_insert(item.work);
+        match item.kind {
+            MediaKind::Video => self.videos += 1,
+            _ => self.images += 1,
+        }
+        if item.sizing == Sizing::UnknownLength {
+            self.unknown += 1;
+        }
+        self.items.push(item);
+    }
+
     /// Work units for one path, or `None` if it was not in the scan or could
     /// not be costed.
+    ///
+    /// Indexed rather than scanned because of where this is called from: once
+    /// per finished file, to move the progress bar. A linear search made that
+    /// quadratic in the size of the batch — on the fifty-thousand-image run the
+    /// activity log's capacity was chosen for, something like a billion path
+    /// comparisons over the run, on the thread drawing the window.
     pub fn work_for(&self, path: &Path) -> Option<f64> {
-        self.items
-            .iter()
-            .find(|i| i.path == path)
-            .map(|i| i.work)
-            .filter(|w| *w > 0.0)
+        self.by_path.get(path).copied().filter(|w| *w > 0.0)
     }
 
     /// True when nothing could be costed, so callers fall back to counting
@@ -225,14 +260,19 @@ pub fn probe_item(item: &MediaItem) -> ProbedItem {
 /// cancelled scan returns what it managed to measure, which is still a usable
 /// lower bound.
 pub fn probe(items: &[MediaItem], cancel: &CancelToken) -> Vec<ProbedItem> {
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        if cancel.is_cancelled() {
-            break;
-        }
-        out.push(probe_item(item));
-    }
-    out
+    // In parallel because the expensive case is a folder of video, where each
+    // item costs an `ffprobe` subprocess — five hundred clips was five hundred
+    // spawns end to end, and the user is waiting on the first estimate the
+    // whole time. Images cost a header read and barely notice either way.
+    //
+    // `filter_map` rather than a `break`: rayon has no early exit, so a
+    // cancelled scan drops the items it never reached and returns the rest,
+    // which is the same "a partial scan is still a usable lower bound" contract
+    // the sequential loop had.
+    items
+        .par_iter()
+        .filter_map(|item| (!cancel.is_cancelled()).then(|| probe_item(item)))
+        .collect()
 }
 
 /// Cost an already-probed batch. The pure half — no I/O, safe to call as often
@@ -240,19 +280,10 @@ pub fn probe(items: &[MediaItem], cancel: &CancelToken) -> Vec<ProbedItem> {
 pub fn cost(probed: &[ProbedItem], model: &CostModel) -> Workload {
     let mut out = Workload::default();
     for p in probed {
-        match p.kind {
-            MediaKind::Video => out.videos += 1,
-            _ => out.images += 1,
-        }
-        if p.sizing == Sizing::UnknownLength {
-            out.unknown += 1;
-        }
-        let work = p.work(model);
-        out.total_work += work;
-        out.items.push(ItemCost {
+        out.push(ItemCost {
             path: p.path.clone(),
             kind: p.kind,
-            work,
+            work: p.work(model),
             sizing: p.sizing,
         });
     }
@@ -481,9 +512,9 @@ mod tests {
         let probed = probe(&items, &CancelToken::new());
         let w = cost(&probed, &model());
         assert_eq!(w.images, 4);
-        assert_eq!(w.items.len(), 4);
-        assert!((w.total_work - w.items.iter().map(|i| i.work).sum::<f64>()).abs() < 1e-9);
-        assert_eq!(w.work_for(&items[0].path), Some(w.items[0].work));
+        assert_eq!(w.items().len(), 4);
+        assert!((w.total_work - w.items().iter().map(|i| i.work).sum::<f64>()).abs() < 1e-9);
+        assert_eq!(w.work_for(&items[0].path), Some(w.items()[0].work));
 
         // Re-costing is pure: the same probe answers a new cost model with no
         // second pass over the disk. This is what lets a slider move the
@@ -502,6 +533,60 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(probe(&items, &cancel).is_empty());
+    }
+
+    #[test]
+    fn the_by_path_index_agrees_with_the_list_it_indexes() {
+        // `work_for` is called once per finished file to move the progress bar,
+        // so it is indexed rather than searched. The index is a second copy of
+        // the same fact, and the failure mode when it drifts is not a crash —
+        // it is a bar that silently stops moving — so it is pinned here.
+        let dir = tmp("index");
+        let items: Vec<MediaItem> = ["a.png", "b.png", "c.png"]
+            .iter()
+            .map(|n| {
+                let p = png(&dir, n, 640, 480);
+                item(p.to_str().unwrap(), MediaKind::Image)
+            })
+            .collect();
+        let w = cost(&probe(&items, &CancelToken::new()), &model());
+
+        for it in w.items() {
+            assert_eq!(
+                w.work_for(&it.path),
+                Some(it.work),
+                "index disagrees with the list for {}",
+                it.path.display()
+            );
+        }
+        assert_eq!(w.work_for(Path::new("/never/scanned.png")), None);
+
+        // A video of unknown length costs zero and must stay uncreditable,
+        // rather than reporting Some(0.0) and crediting nothing forever.
+        let mut unknown = Workload::default();
+        unknown.push(ItemCost {
+            path: PathBuf::from("/x/clip.mp4"),
+            kind: MediaKind::Video,
+            work: 0.0,
+            sizing: Sizing::UnknownLength,
+        });
+        assert_eq!(unknown.work_for(Path::new("/x/clip.mp4")), None);
+        assert_eq!(unknown.unknown, 1);
+        assert_eq!(unknown.videos, 1);
+
+        // The same file named twice keeps its first costing, which is what a
+        // linear search over `items` would have returned.
+        let mut dup = Workload::default();
+        for work in [12.0, 99.0] {
+            dup.push(ItemCost {
+                path: PathBuf::from("/x/same.png"),
+                kind: MediaKind::Image,
+                work,
+                sizing: Sizing::Probed,
+            });
+        }
+        assert_eq!(dup.work_for(Path::new("/x/same.png")), Some(12.0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

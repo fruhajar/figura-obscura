@@ -11,7 +11,14 @@ description = "Figura Obscura inference: ort-based detectors, letterbox/NMS, nat
 ob-core = { workspace = true }
 ort = { workspace = true }
 ndarray = { workspace = true }
+rayon = { workspace = true }
+num_cpus = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Only to locate an already-downloaded model in the local cache; `require`
+# never touches the network, so the network-free rule (R8) still holds.
+ob-models = { workspace = true }
 
 [features]
 # CPU is always available (ort default). GPU EPs are opt-in to keep the default

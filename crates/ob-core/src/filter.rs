@@ -114,6 +114,17 @@ impl FilterSet {
     pub fn select_all<'a>(&self, dets: &'a [Detection]) -> Vec<&'a Detection> {
         dets.iter().filter(|d| self.selects(d)).collect()
     }
+
+    /// As [`FilterSet::select_all`], but yielding owned detections.
+    ///
+    /// Every caller in the pipeline wants owned values — a `Detection` is four
+    /// floats and two small enums, so borrowing buys nothing — and reaching
+    /// them through `select_all(..).into_iter().copied().collect()` allocated
+    /// twice per frame. On video that is two allocations per frame for the
+    /// length of the clip.
+    pub fn select_owned(&self, dets: &[Detection]) -> Vec<Detection> {
+        dets.iter().copied().filter(|d| self.selects(d)).collect()
+    }
 }
 
 #[cfg(test)]

@@ -103,8 +103,20 @@ fn round_corners(frame: &mut Frame, r: &Rect, orig: &[u8], rounding: f32) {
         return;
     }
     let rad2 = radius * radius;
+    // Only the four corner squares can fall outside the rounded boundary:
+    // everywhere else, the snap below puts the arc centre on the pixel itself
+    // and the distance is zero. Scanning the whole rectangle to discover that
+    // was the bulk of the work for a large box.
+    let band = (radius.ceil() as usize).min(rw.min(rh));
+    let in_corner = |d: usize, len: usize| d < band || len - d <= band;
     for dy in 0..rh {
+        if !in_corner(dy, rh) {
+            continue;
+        }
         for dx in 0..rw {
+            if !in_corner(dx, rw) {
+                continue;
+            }
             // Pixel center in region-local coordinates.
             let xc = dx as f64 + 0.5;
             let yc = dy as f64 + 0.5;
@@ -139,18 +151,26 @@ fn round_corners(frame: &mut Frame, r: &Rect, orig: &[u8], rounding: f32) {
 /// Fill a rectangle with a flat RGB color (alpha ignored for opaque fill).
 fn solid_fill(frame: &mut Frame, r: &Rect, color: [u8; 4]) {
     let w = frame.width as usize;
+    let rw = r.x1 - r.x0;
+    // One row built once and copied down. The obvious triple-index-per-pixel
+    // loop is the same bytes written the slow way: it reindexes the frame for
+    // every channel and defeats any chance of a wide store.
+    let mut row_px = Vec::with_capacity(rw * 3);
+    for _ in 0..rw {
+        row_px.extend_from_slice(&color[..3]);
+    }
     for y in r.y0..r.y1 {
-        let row = (y * w + r.x0) * 3;
-        for x in 0..(r.x1 - r.x0) {
-            let p = row + x * 3;
-            frame.data[p] = color[0];
-            frame.data[p + 1] = color[1];
-            frame.data[p + 2] = color[2];
-        }
+        let start = (y * w + r.x0) * 3;
+        frame.data[start..start + rw * 3].copy_from_slice(&row_px);
     }
 }
 
 /// Mosaic: average each `block×block` cell and paint it flat.
+///
+/// Both halves walk the cell as row slices rather than recomputing
+/// `(y * w + x) * 3` per pixel per channel. The sums stay `u64` and are taken
+/// in the same order as before, so the averages — and therefore the output —
+/// are unchanged.
 fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
     let w = frame.width as usize;
     let block = block as usize;
@@ -160,25 +180,25 @@ fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
         while bx < r.x1 {
             let cx1 = (bx + block).min(r.x1);
             let cy1 = (by + block).min(r.y1);
+            let cw = cx1 - bx;
+
             // Average the cell.
             let (mut sr, mut sg, mut sb, mut count) = (0u64, 0u64, 0u64, 0u64);
             for y in by..cy1 {
-                for x in bx..cx1 {
-                    let p = (y * w + x) * 3;
-                    sr += frame.data[p] as u64;
-                    sg += frame.data[p + 1] as u64;
-                    sb += frame.data[p + 2] as u64;
+                let start = (y * w + bx) * 3;
+                for px in frame.data[start..start + cw * 3].chunks_exact(3) {
+                    sr += px[0] as u64;
+                    sg += px[1] as u64;
+                    sb += px[2] as u64;
                     count += 1;
                 }
             }
             if count > 0 {
-                let (ar, ag, ab) = ((sr / count) as u8, (sg / count) as u8, (sb / count) as u8);
+                let avg = [(sr / count) as u8, (sg / count) as u8, (sb / count) as u8];
                 for y in by..cy1 {
-                    for x in bx..cx1 {
-                        let p = (y * w + x) * 3;
-                        frame.data[p] = ar;
-                        frame.data[p + 1] = ag;
-                        frame.data[p + 2] = ab;
+                    let start = (y * w + bx) * 3;
+                    for px in frame.data[start..start + cw * 3].chunks_exact_mut(3) {
+                        px.copy_from_slice(&avg);
                     }
                 }
             }
@@ -212,6 +232,203 @@ mod tests {
             bbox: b,
             category: cat::FEMALE_GENITALIA_EXPOSED,
             score: 1.0,
+        }
+    }
+
+    /// Deterministic noise, so a failure is reproducible and no dependency is
+    /// needed to generate it.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    fn noisy(w: u32, h: u32, seed: u64) -> Frame {
+        let mut rng = Rng(seed);
+        let mut data = vec![0u8; (w * h * 3) as usize];
+        for b in data.iter_mut() {
+            *b = rng.next() as u8;
+        }
+        Frame::new(w, h, data).unwrap()
+    }
+
+    /// The pre-rewrite renderers, transcribed literally, so the faster versions
+    /// can be held to producing identical bytes rather than plausible ones.
+    ///
+    /// Lints are off here on purpose: the value of this module is that it is a
+    /// transcription. Tidying it — even in ways clippy is right about — would
+    /// make it evidence of what someone rewrote rather than of what shipped.
+    #[allow(clippy::all)]
+    mod reference {
+        use super::super::Rect;
+        use ob_core::geometry::Frame;
+
+        pub fn solid_fill(frame: &mut Frame, r: &Rect, color: [u8; 4]) {
+            let w = frame.width as usize;
+            for y in r.y0..r.y1 {
+                let row = (y * w + r.x0) * 3;
+                for x in 0..(r.x1 - r.x0) {
+                    let p = row + x * 3;
+                    frame.data[p] = color[0];
+                    frame.data[p + 1] = color[1];
+                    frame.data[p + 2] = color[2];
+                }
+            }
+        }
+
+        pub fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
+            let w = frame.width as usize;
+            let block = block as usize;
+            let mut by = r.y0;
+            while by < r.y1 {
+                let mut bx = r.x0;
+                while bx < r.x1 {
+                    let cx1 = (bx + block).min(r.x1);
+                    let cy1 = (by + block).min(r.y1);
+                    let (mut sr, mut sg, mut sb, mut count) = (0u64, 0u64, 0u64, 0u64);
+                    for y in by..cy1 {
+                        for x in bx..cx1 {
+                            let p = (y * w + x) * 3;
+                            sr += frame.data[p] as u64;
+                            sg += frame.data[p + 1] as u64;
+                            sb += frame.data[p + 2] as u64;
+                            count += 1;
+                        }
+                    }
+                    if count > 0 {
+                        let (ar, ag, ab) =
+                            ((sr / count) as u8, (sg / count) as u8, (sb / count) as u8);
+                        for y in by..cy1 {
+                            for x in bx..cx1 {
+                                let p = (y * w + x) * 3;
+                                frame.data[p] = ar;
+                                frame.data[p + 1] = ag;
+                                frame.data[p + 2] = ab;
+                            }
+                        }
+                    }
+                    bx += block;
+                }
+                by += block;
+            }
+        }
+
+        pub fn round_corners(frame: &mut Frame, r: &Rect, orig: &[u8], rounding: f32) {
+            let w = frame.width as usize;
+            let rw = r.x1 - r.x0;
+            let rh = r.y1 - r.y0;
+            let radius = (rounding.clamp(0.0, 0.5) as f64) * (rw.min(rh) as f64);
+            if radius <= 0.0 {
+                return;
+            }
+            let rad2 = radius * radius;
+            for dy in 0..rh {
+                for dx in 0..rw {
+                    let xc = dx as f64 + 0.5;
+                    let yc = dy as f64 + 0.5;
+                    let cx = if xc < radius {
+                        radius
+                    } else if (rw as f64 - xc) < radius {
+                        rw as f64 - radius
+                    } else {
+                        xc
+                    };
+                    let cy = if yc < radius {
+                        radius
+                    } else if (rh as f64 - yc) < radius {
+                        rh as f64 - radius
+                    } else {
+                        yc
+                    };
+                    let (ex, ey) = (xc - cx, yc - cy);
+                    if ex * ex + ey * ey > rad2 {
+                        let p = ((r.y0 + dy) * w + (r.x0 + dx)) * 3;
+                        let q = (dy * rw + dx) * 3;
+                        frame.data[p] = orig[q];
+                        frame.data[p + 1] = orig[q + 1];
+                        frame.data[p + 2] = orig[q + 2];
+                    }
+                }
+            }
+        }
+    }
+
+    /// Random rectangles inside a 96x72 frame, always non-empty.
+    fn random_rects(seed: u64, n: usize) -> Vec<Rect> {
+        let mut rng = Rng(seed);
+        (0..n)
+            .map(|_| {
+                let x0 = rng.below(80);
+                let y0 = rng.below(60);
+                Rect {
+                    x0,
+                    y0,
+                    x1: x0 + 1 + rng.below(96 - x0),
+                    y1: y0 + 1 + rng.below(72 - y0),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_rewritten_fills_are_byte_for_byte_the_old_ones() {
+        // These are pure speed rewrites — row slices instead of three indexed
+        // writes per pixel — so anything but exact agreement is a bug.
+        for (i, r) in random_rects(0x5eed_1234, 40).into_iter().enumerate() {
+            let base = noisy(96, 72, 0xabcd_0000 + i as u64);
+
+            let mut got = base.clone();
+            let mut want = base.clone();
+            solid_fill(&mut got, &r, [17, 200, 93, 255]);
+            reference::solid_fill(&mut want, &r, [17, 200, 93, 255]);
+            assert_eq!(got.data, want.data, "solid_fill differs on rect {i}");
+
+            for block in [1u32, 3, 8, 17] {
+                let mut got = base.clone();
+                let mut want = base.clone();
+                pixelate(&mut got, &r, block);
+                reference::pixelate(&mut want, &r, block);
+                assert_eq!(
+                    got.data, want.data,
+                    "pixelate(block={block}) differs on rect {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn restricting_rounding_to_the_corners_restores_exactly_the_same_pixels() {
+        // The rewrite skips the interior on the argument that the arc-centre
+        // snap makes the distance zero there. That argument is what this test
+        // exists to check — if it is wrong anywhere, the interior of a censor
+        // box gets its original pixels back, which is a leak.
+        for (i, r) in random_rects(0xfeed_9876, 40).into_iter().enumerate() {
+            for rounding in [0.05f32, 0.2, 0.35, 0.5] {
+                let base = noisy(96, 72, 0x1234_0000 + i as u64);
+                let orig = copy_rect(&base, &r);
+
+                let mut got = base.clone();
+                let mut want = base.clone();
+                solid_fill(&mut got, &r, [0, 0, 0, 255]);
+                solid_fill(&mut want, &r, [0, 0, 0, 255]);
+                round_corners(&mut got, &r, &orig, rounding);
+                reference::round_corners(&mut want, &r, &orig, rounding);
+
+                assert_eq!(
+                    got.data,
+                    want.data,
+                    "rounding={rounding} differs on rect {i} ({}x{})",
+                    r.x1 - r.x0,
+                    r.y1 - r.y0
+                );
+            }
         }
     }
 

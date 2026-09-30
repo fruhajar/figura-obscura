@@ -623,9 +623,7 @@ mod tests {
         use ob_job::estimate::{ItemCost, Sizing};
         let mut w = Workload::default();
         for (path, work) in items {
-            w.total_work += work;
-            w.images += 1;
-            w.items.push(ItemCost {
+            w.push(ItemCost {
                 path: PathBuf::from(path),
                 kind: ob_media::MediaKind::Image,
                 work: *work,
