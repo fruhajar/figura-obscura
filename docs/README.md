@@ -12,9 +12,6 @@
 - **[RELEASING.md](RELEASING.md)** — cutting a release: the version bump, the tag
   that builds all three platforms, what the notes have to say, and the smoke test
   before the draft is published.
-- **[planning-handoff.md](planning-handoff.md)** — the original design handoff.
-  Historical: it describes what was planned, not what shipped. Read
-  `ARCHITECTURE.md` for the latter.
 
 The project overview lives in [`../README.md`](../README.md), which is what
 GitHub shows on the front page.
