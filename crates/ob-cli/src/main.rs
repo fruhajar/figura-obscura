@@ -44,7 +44,7 @@ fn build_long_version() -> String {
              Rebuild with a GPU feature to use one, e.g.\n  \
              cargo build --release --features ob-detect/cuda    # NVIDIA\n  \
              cargo build --release --features ob-detect/webgpu  # AMD/Intel\n\
-             See HOST-BUILD.md for the per-vendor prerequisites.",
+             See docs/HOST-BUILD.md for the per-vendor prerequisites.",
         );
     }
     out

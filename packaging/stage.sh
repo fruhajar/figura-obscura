@@ -49,7 +49,7 @@ case "$gpu" in
     none)   ;;
     cuda)   features=(--features ob-detect/cuda) ;;
     # AMD: `rocm` has no prebuilt for x86_64 linux and silently yields a
-    # CPU-only binary. See HOST-BUILD.md.
+    # CPU-only binary. See docs/HOST-BUILD.md.
     webgpu) features=(--features ob-detect/webgpu) ;;
     *) echo "error: --gpu must be one of none, cuda, webgpu" >&2; exit 1 ;;
 esac
@@ -123,12 +123,12 @@ if [[ "$gpu" != "none" ]]; then
     done
     shopt -u nullglob
     # Every GPU build must produce *something*; zero means the feature silently
-    # resolved to the CPU runtime, which is the trap HOST-BUILD.md describes.
+    # resolved to the CPU runtime, which is the trap docs/HOST-BUILD.md describes.
     # `rocm` is its own case: there is no ROCm prebuilt for linux-x86_64, so it
     # always lands here.
     if [[ "$staged_providers" -eq 0 ]]; then
         echo "error: --gpu $gpu but no GPU runtime libraries were produced." >&2
-        echo "       This is the silent-CPU-fallback trap described in HOST-BUILD.md." >&2
+        echo "       This is the silent-CPU-fallback trap described in docs/HOST-BUILD.md." >&2
         echo "       Check 'obscura --version' -- it names the providers this build has." >&2
         exit 1
     fi
