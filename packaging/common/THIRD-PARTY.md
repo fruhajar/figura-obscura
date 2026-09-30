@@ -34,9 +34,9 @@ Whichever is chosen, Obscura keeps FFmpeg **separately replaceable** — a user 
 substitute their own build, and `OBSCURA_FFMPEG`/`OBSCURA_FFPROBE` exist to make that
 explicit. That is an LGPL requirement and good practice besides.
 
-If you bundle anything, put the matching FFmpeg source tarball (or a link to the
-exact upstream tag) next to the release on itch.io, and record which tag it was
-**at build time**, while you still know.
+If you bundle anything, attach the matching FFmpeg source tarball (or a link to
+the exact upstream tag) to the GitHub release, and record which tag it was **at
+build time**, while you still know.
 
 > Separately from copyright: H.264 encoding has patent-licensing considerations
 > for commercial products, independent of which encoder you use. It is widely

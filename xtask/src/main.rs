@@ -12,8 +12,8 @@ mod icon;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Sizes emitted as standalone PNGs. Covers Linux hicolor theme directories,
-/// the itch.io page assets and the Windows/macOS source art.
+/// Sizes emitted as standalone PNGs. Covers Linux hicolor theme directories and
+/// the Windows/macOS source art.
 const PNG_SIZES: &[u32] = &[16, 32, 48, 64, 128, 256, 512, 1024];
 
 /// Sizes packed into the Windows `.ico`. 256 is the format's maximum.

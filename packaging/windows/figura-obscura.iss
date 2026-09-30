@@ -28,9 +28,9 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
-; Per-user by default: no UAC prompt, and no admin rights needed to buy and run
-; a tool from itch.io. `lowest` keeps {autopf} resolving to the user's own
-; Programs directory.
+; Per-user by default: no UAC prompt, and no admin rights needed to download a
+; tool and run it. `lowest` keeps {autopf} resolving to the user's own Programs
+; directory.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\..\target\installer
