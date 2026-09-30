@@ -48,8 +48,8 @@ error: this FFmpeg is a --enable-gpl build.
 
 Figura Obscura spawns ffmpeg as a separate process, so this does NOT relicense
 Figura Obscura's own code. It does mean that if you ship this binary you must
-offer the corresponding FFmpeg source for this exact build, alongside the
-release on itch.io.
+offer the corresponding FFmpeg source for this exact build, attached to the
+release it went out with.
 
 Three ways forward:
   1. Use an LGPL build (recommended, lightest obligations):

@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.79"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -45,10 +45,26 @@ rayon = "1.10"
 # works; GPU execution providers are added per-crate via feature flags.
 ort = "=2.0.0-rc.10"
 ndarray = "0.16"
+# Physical (not logical) core count, for the detector's thread budget. Hyper-
+# threads make the two differ by 2x, and handing compute-bound inference twice
+# the threads it wants is measurably slower — see docs/PERFORMANCE.md.
+num_cpus = "1"
 
-# --- Release profile: opaque, small native binary (R9) ---
+# --- Release profile: opaque native binary (R9) ---
+#
+# `opt-level` used to be "z" here, optimising the whole workspace for size. That
+# is the wrong default for this program: it spends its time in pixel loops and
+# in decompression, and both are exactly what "z" gives up on. Measured, the
+# change is worth roughly 2x on an image batch — most of it in PNG decode, via
+# `png` and `miniz_oxide`, which is why a per-package override on our own crates
+# recovered only about half of it. See docs/PERFORMANCE.md.
+#
+# It costs about 3.3 MB on a binary that already carries ONNX Runtime: 27.6 MB
+# to 30.9 MB, a little under 12%. The rest of R9 is untouched — `strip` and
+# `panic = "abort"` are what make the binary opaque, and fat LTO with one
+# codegen unit still discards everything unreachable.
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"

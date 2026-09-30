@@ -2,6 +2,33 @@ Offline batch censoring for images and video — GUI and CLI. Nothing on the
 processing path touches the network; detector models are downloaded once, on
 first run.
 
+## What changed since 0.1.0
+
+- **Image batches run roughly twice as fast.** The release profile had been
+  optimising for size, which gives up exactly what this program spends its time
+  in: pixel loops and decompression. A 20-image batch goes from 1.37 s to
+  0.62 s, a 10-second 1080p video from 6.88 s to 4.46 s. It costs 3.3 MB of
+  binary. Letterboxing a 4K frame for the detector is 22× faster, and the
+  censor renderers 3–7×.
+- **The detector sizes its thread pool from physical cores**, not logical ones.
+  Giving compute-bound inference twice the threads it wants was measurably
+  slower than leaving it alone.
+- **Long GIFs no longer grow without bound.** The palette filter graph held
+  every frame in memory until end of input, so a long clip grew until the
+  machine swapped, which is what looked like a hang. Frames now pass through a
+  lossless intermediate; the output is byte-identical, and peak memory on a
+  600-frame clip drops from 844 MB to 170 MB.
+- **The window stays responsive with very large file lists.**
+- **`--version` and the About page name the execution provider actually in
+  use**, so a silent CPU fallback cannot pass for a GPU run.
+- **The output codec follows the container you chose**, rather than the
+  container being pushed around by the codec.
+- **An installed GPU build finds its own runtime libraries** (Linux). Before
+  this, a webgpu install did not start at all and a cuda install fell back to
+  CPU without saying so.
+- The Windows installer's final page opens the copy of the app it just
+  installed, not whichever one was already on `PATH`.
+
 ## Install
 
 **Windows** — run `FiguraObscura-*-windows-x64-setup.exe`. It installs to

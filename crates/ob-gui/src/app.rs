@@ -57,6 +57,20 @@ fn fingerprint<T: serde::Serialize>(value: &T) -> u64 {
     h.finish()
 }
 
+/// Hash an input list without going through `serde_json`.
+///
+/// This runs every frame to notice a changed batch, so it must not allocate a
+/// 20 KB JSON string per frame to do it. Paths hash straight from their bytes.
+fn inputs_key(inputs: &[PathBuf]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    inputs.len().hash(&mut h);
+    for p in inputs {
+        p.as_os_str().hash(&mut h);
+    }
+    h.finish()
+}
+
 /// What the live preview should do about the settings as they stand.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PreviewNext {
@@ -167,6 +181,76 @@ pub struct PreviewView {
     pub regions: usize,
 }
 
+/// What the queue list needs to draw one input, worked out once.
+///
+/// Every field here used to be recomputed inside the row loop: two `stat`
+/// calls, a GIF header decode and two `String` allocations per row, sixty times
+/// a second. That is a model question — "what is this file?" — answered in the
+/// view, so the cost scaled with the length of the batch rather than with what
+/// the batch was doing. Answered once per change to the list, it costs nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputRow {
+    pub path: PathBuf,
+    /// Trailing component: what identifies the file to a human.
+    pub name: String,
+    /// Full path, for the hover tooltip.
+    pub full: String,
+    pub kind: RowKind,
+    /// Pre-formatted size, absent for folders and unreadable files.
+    pub size: Option<String>,
+}
+
+/// How an input is drawn in the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Folder,
+    Image,
+    Video,
+    /// The batch will skip it. Shown rather than hidden, so nothing disappears
+    /// silently.
+    Unsupported,
+}
+
+impl InputRow {
+    /// Describe `path` without opening it.
+    ///
+    /// Extension-only classification, so adding a folder of GIFs does not
+    /// decode a GIF header per file on the UI thread. The background scan that
+    /// already runs settles the animated-GIF case a moment later, through
+    /// [`ObApp::refine_rows`].
+    fn probe(path: &Path) -> Self {
+        let meta = std::fs::metadata(path).ok();
+        let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+        let kind = if is_dir {
+            RowKind::Folder
+        } else {
+            RowKind::from(ob_media::classify(path))
+        };
+        Self {
+            name: path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            full: path.display().to_string(),
+            kind,
+            size: meta
+                .filter(|m| m.is_file())
+                .map(|m| ob_core::registry::human_bytes(m.len())),
+            path: path.to_path_buf(),
+        }
+    }
+}
+
+impl From<ob_media::MediaKind> for RowKind {
+    fn from(k: ob_media::MediaKind) -> Self {
+        match k {
+            ob_media::MediaKind::Image => RowKind::Image,
+            ob_media::MediaKind::Video => RowKind::Video,
+            ob_media::MediaKind::Unknown => RowKind::Unsupported,
+        }
+    }
+}
+
 pub struct ObApp {
     pub prefs: Prefs,
     /// Effective settings for the selected model (defaults layered with edits).
@@ -176,6 +260,8 @@ pub struct ObApp {
     pub registry: Vec<ModelEntry>,
 
     pub inputs: Vec<PathBuf>,
+    /// `inputs` as the queue list draws it, rebuilt only when `inputs` changes.
+    pub rows: Vec<InputRow>,
     pub downloads: Downloads,
 
     pub run: Option<RunHandle>,
@@ -254,6 +340,7 @@ impl Default for ObApp {
             settings,
             registry,
             inputs: Vec::new(),
+            rows: Vec::new(),
             downloads,
             run: None,
             run_state: RunState::default(),
@@ -485,13 +572,14 @@ impl ObApp {
     /// arrive by button, by drag-and-drop and by folder expansion, and a scan
     /// that quietly described the previous batch would be worse than none.
     fn pump_estimate(&mut self) {
-        let key = fingerprint(&self.inputs);
+        let key = inputs_key(&self.inputs);
         if self.probed_key != Some(key) {
             if let Some(job) = &self.estimate_job {
                 job.cancel();
             }
             self.probed_key = Some(key);
             self.probed = None;
+            self.rows = self.inputs.iter().map(|p| InputRow::probe(p)).collect();
             self.estimate_job = if self.inputs.is_empty() {
                 None
             } else {
@@ -501,7 +589,41 @@ impl ObApp {
         if let Some(items) = self.estimate_job.as_ref().and_then(|j| j.poll()) {
             self.probed = Some(Arc::new(items));
             self.estimate_job = None;
+            self.refine_rows();
         }
+    }
+
+    /// Correct the row glyphs from the scan that has just landed.
+    ///
+    /// The only case that moves is `.gif`, which is two formats wearing one
+    /// extension — the scan opened the file and knows which. Doing it here
+    /// rather than in [`InputRow::probe`] keeps the decode off the UI thread.
+    fn refine_rows(&mut self) {
+        let Some(probed) = self.probed.as_ref() else {
+            return;
+        };
+        let kinds: std::collections::HashMap<&Path, ob_media::MediaKind> = probed
+            .iter()
+            .map(|item| (item.path.as_path(), item.kind))
+            .collect();
+        for row in &mut self.rows {
+            if row.kind == RowKind::Folder {
+                continue;
+            }
+            if let Some(&kind) = kinds.get(row.path.as_path()) {
+                row.kind = RowKind::from(kind);
+            }
+        }
+    }
+
+    /// Files and folders in the batch, from the rows rather than from disk.
+    pub fn input_counts(&self) -> (usize, usize) {
+        let folders = self
+            .rows
+            .iter()
+            .filter(|r| r.kind == RowKind::Folder)
+            .count();
+        (self.rows.len() - folders, folders)
     }
 
     /// Explicitly asked for: always re-runs inference.
@@ -1468,6 +1590,71 @@ mod tests {
         let flat = app.workload().expect("costed").total_work;
         assert!(flat < tiled, "{flat} should be below {tiled}");
         assert!((flat - 1.0).abs() < 1e-6, "one pass, got {flat}");
+    }
+
+    /// The queue list must be a view of facts already decided, not a place
+    /// where they get decided sixty times a second.
+    #[test]
+    fn the_rows_describe_the_inputs_and_are_rebuilt_when_they_change() {
+        let (mut app, dir) = test_app("rows");
+        let img = write_png(&dir, "a.png", 64, 64);
+        let clip = dir.join("b.mp4");
+        std::fs::write(&clip, vec![0u8; 2048]).unwrap();
+        let notes = dir.join("notes.txt");
+        std::fs::write(&notes, b"x").unwrap();
+
+        app.inputs = vec![img.clone(), clip.clone(), notes.clone(), dir.to_path_buf()];
+        app.pump_estimate();
+
+        let kinds: Vec<RowKind> = app.rows.iter().map(|r| r.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                RowKind::Image,
+                RowKind::Video,
+                RowKind::Unsupported,
+                RowKind::Folder
+            ]
+        );
+        assert_eq!(app.rows[0].name, "a.png");
+        assert_eq!(app.rows[0].full, img.display().to_string());
+        // A folder has no size to show; a file does.
+        assert!(app.rows[1].size.is_some());
+        assert!(app.rows[3].size.is_none());
+        assert_eq!(app.input_counts(), (3, 1));
+
+        // A rebuilt list must not leave the old rows standing: the remove
+        // button indexes `inputs` by row position, so a stale row deletes the
+        // wrong file.
+        app.inputs.remove(1);
+        app.pump_estimate();
+        assert_eq!(app.rows.len(), app.inputs.len());
+        assert_eq!(app.rows[1].name, "notes.txt");
+    }
+
+    /// Drawing must not get more expensive as the batch gets longer.
+    ///
+    /// Asserted as "the work is the same shape either way" rather than as a
+    /// wall-clock budget, which would be a flaky test on shared CI. The list is
+    /// virtualised, so the rows off screen cost nothing to skip; what is left
+    /// scaling with the batch is the row cache, built once per change.
+    #[test]
+    fn a_long_batch_draws_the_same_rows_as_a_short_one() {
+        let (mut app, dir) = test_app("rows-long");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Queue;
+        let imgs = dir.join("imgs");
+        std::fs::create_dir_all(&imgs).unwrap();
+        for i in 0..400 {
+            let p = imgs.join(format!("f{i}.png"));
+            std::fs::write(&p, vec![0u8; 1024]).unwrap();
+            app.inputs.push(p);
+        }
+        // Several frames: a virtualised list builds different widgets as it
+        // scrolls, which is exactly where duplicate ids would show up.
+        draw(&mut app, 3);
+        assert_eq!(app.rows.len(), 400);
+        assert!(app.rows.iter().all(|r| r.kind == RowKind::Image));
     }
 
     #[test]

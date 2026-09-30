@@ -7,19 +7,26 @@ downloaded once, up front.
 > **Status:** feature-complete, packaged, and building. Every crate is
 > implemented, the desktop app has been rebuilt around a first-run setup flow,
 > in-app model downloads and a proper theme, and installers exist for Windows,
-> Linux and macOS. `cargo build --release`, `cargo test` (130 tests) and
+> Linux and macOS. `cargo build --release`, `cargo test` (216 tests) and
 > `cargo clippy --all-targets` are green on rustc 1.98.0.
 >
-> What is **not** yet validated is anything needing real hardware, a display, or
-> real weights: GPU execution providers, inference against an actual `.onnx`,
-> and the app rendered on screen (the build container has no display server, so
-> the interface is exercised headlessly instead — every page is laid out under
-> test, which catches panics and id clashes but not appearance). No model host
-> is reachable from this container either, so model checksums stay unpinned —
-> never pin a digest computed here.
+> Inference against a real `.onnx` **is** now exercised: `nudenet-320n` runs
+> end to end over the files in `demo/`, and the batched-inference tests run
+> against it where it is present in the local model cache (they skip, with a
+> note, where it is not).
 >
-> To ship: [`RELEASING.md`](RELEASING.md). To build on a host:
-> [`HOST-BUILD.md`](HOST-BUILD.md).
+> What is still **not** validated is anything needing GPU hardware or a display:
+> GPU execution providers, and the app rendered on screen (the build container
+> has no display server, so the interface is exercised headlessly instead —
+> every page is laid out under test, which catches panics and id clashes but not
+> appearance). No model host is reachable from this container either, so model
+> checksums for the models that have not been downloaded stay unpinned — never
+> pin a digest computed here.
+>
+> How it fits together: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). What it costs to
+> run, and what has been measured: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). To ship:
+> [`docs/RELEASING.md`](docs/RELEASING.md). To build on a host:
+> [`docs/HOST-BUILD.md`](docs/HOST-BUILD.md).
 
 ## Quickstart
 
@@ -120,7 +127,7 @@ installer for that.
 One script per platform, each run on its own OS, all wrapping the same staged
 tree — see [Packaging](#packaging) for the commands. Windows additionally needs
 [Inno Setup 6](https://jrsoftware.org/isinfo.php). The full release procedure is
-in [`RELEASING.md`](RELEASING.md).
+in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Architecture
 

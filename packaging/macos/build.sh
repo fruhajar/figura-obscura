@@ -7,10 +7,12 @@
 # Must run on macOS: `ort` downloads a prebuilt ONNX Runtime for the host
 # triple, and codesign/notarytool are Apple tools.
 #
-# Signing is optional here but effectively mandatory for release. An unsigned,
-# un-notarised app downloaded from itch.io is quarantined by Gatekeeper and
-# shows "Figura Obscura is damaged and can't be opened" — which reads to a buyer
-# as a broken product, not as a security setting.
+# Signing is optional here and skipped by CI, but it is what makes a downloaded
+# app openable without a detour. Any unsigned, un-notarised app that arrives via
+# a browser is quarantined by Gatekeeper and shows "Figura Obscura is damaged and
+# can't be opened", which reads as a broken download rather than as a security
+# setting. Until it is signed, the release notes have to say so and name the
+# right-click -> Open workaround.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

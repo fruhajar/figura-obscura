@@ -14,7 +14,7 @@ pub mod preprocess;
 pub mod session;
 pub mod tile;
 
-use ob_core::geometry::{Detection, Frame};
+use ob_core::geometry::{Detection, Frame, Region};
 use ob_core::registry::ModelEntry;
 use ob_core::settings::SettingValues;
 use ob_core::taxonomy::Category;
@@ -27,6 +27,54 @@ pub trait Detector: Send + Sync {
     /// Run detection on a single frame, returning canonical detections in
     /// original-image pixel coordinates.
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError>;
+
+    /// Run detection over several sub-windows of one frame, returning every
+    /// pass's detections in **frame** coordinates, un-suppressed.
+    ///
+    /// This exists because tiled detection asks the same model the same
+    /// question a dozen times per frame, and doing that one window at a time
+    /// leaves most of the available work on the floor: each pass pays the full
+    /// per-run overhead on an input too small to spread across a modern core
+    /// count. An implementation backed by a graph with a dynamic batch axis can
+    /// answer the whole grid in one run — see [`session::OnnxDetector`].
+    ///
+    /// The default implementation is exactly the loop this replaced: crop each
+    /// window, detect, offset the results. Every existing detector and test
+    /// double therefore keeps working unchanged, and a model whose export fixes
+    /// the batch size falls back to it.
+    ///
+    /// NMS is deliberately *not* applied here. Merging the passes is the
+    /// caller's job, because only the caller knows whether these windows are a
+    /// tile grid to be reconciled or independent questions.
+    fn detect_regions(
+        &self,
+        frame: &Frame,
+        windows: &[Region],
+    ) -> Result<Vec<Detection>, DetectError> {
+        let mut all = Vec::new();
+        for w in windows {
+            let Some(w) = w.clamped(frame.width, frame.height) else {
+                continue;
+            };
+            // The whole-frame window is the common case and needs no copy.
+            let dets = if w == Region::whole(frame) {
+                self.detect(frame)?
+            } else {
+                let Some(sub) = frame.crop(w.x, w.y, w.w, w.h) else {
+                    continue;
+                };
+                self.detect(&sub)?
+            };
+            all.extend(dets.into_iter().map(|mut d| {
+                d.bbox.x1 += w.x as f32;
+                d.bbox.x2 += w.x as f32;
+                d.bbox.y1 += w.y as f32;
+                d.bbox.y2 += w.y as f32;
+                d
+            }));
+        }
+        Ok(all)
+    }
 
     /// Whether this detector is *capable* of emitting `category` at all.
     ///
@@ -46,33 +94,106 @@ pub trait Detector: Send + Sync {
     fn can_emit(&self, _category: Category) -> bool {
         true
     }
+
+    /// The execution provider this detector's ONNX session actually got.
+    ///
+    /// Not what was *asked for* — what ONNX Runtime returned. A CUDA build on a
+    /// machine with no usable driver silently runs on CPU, and until this was
+    /// reportable the only symptom was a slow run at a few percent GPU load.
+    ///
+    /// `None` for detectors with no session of their own (test doubles); the
+    /// wrappers forward their inner detector's answer.
+    fn execution_provider(&self) -> Option<ExecProvider> {
+        None
+    }
 }
 
 /// Ordered execution-provider preference (plan §4). Registration attempts each
-/// in order and silently falls back to CPU.
+/// in order and falls back to CPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecProvider {
     Cuda,
     Rocm,
+    WebGpu,
     DirectMl,
     CoreMl,
     Cpu,
 }
 
+impl ExecProvider {
+    /// ONNX Runtime's own identifier for this provider — the exact string it
+    /// reports from `GetAvailableProviders`, which is how [`session`] decides
+    /// whether the linked runtime can actually offer it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ExecProvider::Cuda => "CUDAExecutionProvider",
+            ExecProvider::Rocm => "ROCMExecutionProvider",
+            ExecProvider::WebGpu => "WebGpuExecutionProvider",
+            ExecProvider::DirectMl => "DmlExecutionProvider",
+            ExecProvider::CoreMl => "CoreMLExecutionProvider",
+            ExecProvider::Cpu => "CPUExecutionProvider",
+        }
+    }
+
+    /// The Cargo feature that compiles this provider in, for an error message
+    /// that can tell the user what to rebuild with.
+    pub fn feature(self) -> Option<&'static str> {
+        match self {
+            ExecProvider::Cuda => Some("cuda"),
+            ExecProvider::Rocm => Some("rocm"),
+            ExecProvider::WebGpu => Some("webgpu"),
+            ExecProvider::DirectMl => Some("directml"),
+            ExecProvider::CoreMl => Some("coreml"),
+            ExecProvider::Cpu => None,
+        }
+    }
+
+    /// Whether this provider runs work on a GPU. CPU is the only one that does
+    /// not, so "did we get a GPU?" is one call rather than a match at each site.
+    pub fn is_gpu(self) -> bool {
+        self != ExecProvider::Cpu
+    }
+}
+
+impl std::fmt::Display for ExecProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// The EP order Obscura requests on the current platform. GPU variants are only
 /// included when their Cargo feature is enabled.
+///
+/// This must stay in step with `session::execution_provider_dispatches`, which
+/// is gated on the same features in the same order — this list is what the
+/// binary *reports* about itself, so a provider missing here (as `webgpu` was)
+/// makes a working GPU build describe itself as CPU-only.
+// Not a `vec![]` literal: each element is `#[cfg]`-gated, and on a build where
+// every GPU feature is off only the CPU push survives, which is what clippy sees.
+#[allow(clippy::vec_init_then_push)]
 pub fn preferred_execution_providers() -> Vec<ExecProvider> {
     let mut eps = Vec::new();
     #[cfg(feature = "cuda")]
     eps.push(ExecProvider::Cuda);
     #[cfg(feature = "rocm")]
     eps.push(ExecProvider::Rocm);
+    #[cfg(feature = "webgpu")]
+    eps.push(ExecProvider::WebGpu);
     #[cfg(feature = "directml")]
     eps.push(ExecProvider::DirectMl);
     #[cfg(feature = "coreml")]
     eps.push(ExecProvider::CoreMl);
     eps.push(ExecProvider::Cpu); // always last
     eps
+}
+
+/// Whether this build compiled in any GPU execution provider at all.
+///
+/// A plain `cargo build --release` produces a CPU-only binary that is
+/// indistinguishable from a GPU one by name, size or `--version`; this is what
+/// lets both binaries say so out loud.
+pub fn gpu_support_compiled_in() -> bool {
+    preferred_execution_providers().iter().any(|e| e.is_gpu())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -147,6 +268,68 @@ mod tests {
     fn cpu_is_always_last_ep() {
         let eps = preferred_execution_providers();
         assert_eq!(*eps.last().unwrap(), ExecProvider::Cpu);
+    }
+
+    #[test]
+    fn cpu_is_the_only_non_gpu_provider() {
+        assert!(!ExecProvider::Cpu.is_gpu());
+        for ep in [
+            ExecProvider::Cuda,
+            ExecProvider::Rocm,
+            ExecProvider::WebGpu,
+            ExecProvider::DirectMl,
+            ExecProvider::CoreMl,
+        ] {
+            assert!(ep.is_gpu(), "{ep} should count as a GPU provider");
+            assert!(ep.feature().is_some(), "{ep} should name a Cargo feature");
+        }
+        assert!(ExecProvider::Cpu.feature().is_none());
+    }
+
+    #[test]
+    fn provider_names_match_onnx_runtime_spelling() {
+        // These are compared verbatim against the strings ONNX Runtime returns
+        // from GetAvailableProviders; a typo here silently reports a present
+        // provider as missing. Note the inconsistent casing is ORT's own --
+        // `WebGpu` and `Dml` are not `WEBGPU`/`DirectML`.
+        assert_eq!(ExecProvider::Cuda.name(), "CUDAExecutionProvider");
+        assert_eq!(ExecProvider::Rocm.name(), "ROCMExecutionProvider");
+        assert_eq!(ExecProvider::WebGpu.name(), "WebGpuExecutionProvider");
+        assert_eq!(ExecProvider::DirectMl.name(), "DmlExecutionProvider");
+        assert_eq!(ExecProvider::CoreMl.name(), "CoreMLExecutionProvider");
+        assert_eq!(ExecProvider::Cpu.name(), "CPUExecutionProvider");
+    }
+
+    #[test]
+    fn gpu_support_tracks_the_compiled_features() {
+        // The whole point of the flag: it must agree with the preference list
+        // rather than being maintained separately.
+        let has_gpu = preferred_execution_providers().iter().any(|e| e.is_gpu());
+        assert_eq!(gpu_support_compiled_in(), has_gpu);
+        // And a default build has no GPU provider, which is precisely the case
+        // that used to be indistinguishable from a GPU one.
+        assert_eq!(
+            gpu_support_compiled_in(),
+            cfg!(any(
+                feature = "cuda",
+                feature = "rocm",
+                feature = "webgpu",
+                feature = "directml",
+                feature = "coreml"
+            ))
+        );
+    }
+
+    #[test]
+    fn every_preferred_provider_is_reported_once() {
+        // `preferred_execution_providers` is what `--version` prints, so a
+        // provider compiled in but missing from the list (webgpu, once) makes a
+        // working GPU build describe itself as CPU-only.
+        let eps = preferred_execution_providers();
+        let mut seen = eps.clone();
+        seen.sort_by_key(|e| e.name());
+        seen.dedup();
+        assert_eq!(seen.len(), eps.len(), "a provider is listed twice");
     }
 
     #[test]

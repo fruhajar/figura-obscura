@@ -8,14 +8,14 @@
 > useless as a record. Nothing else in the repository still uses the old name.
 >
 > Crate names in the §5 sketch are likewise as-drafted (`sb-*`); the shipped
-> crates are `ob-*`. See `README.md` for the current architecture.
+> crates are `ob-*`. See `ARCHITECTURE.md` for the current architecture.
 
 
 > **STATUS: RESOLVED 2026-08-22.** Planning is complete and the final plan was
 > approved. This file is kept only for its research record; it is superseded by:
 > - **Approved plan:** `~/.claude/plans/twinkling-foraging-puppy.md`
 > - **Code scaffold:** the Cargo workspace in this directory (`crates/*`), plus
->   `README.md` and `HOST-BUILD.md`.
+>   `../README.md` and `HOST-BUILD.md`.
 >
 > Locked decisions: all-Rust (`ort` + `egui`), cross-vendor GPU with CPU
 > fallback, Linux-only v1, bounding boxes only. Remaining research item —

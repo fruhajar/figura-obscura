@@ -141,6 +141,59 @@ impl Frame {
     }
 }
 
+/// An axis-aligned sub-rectangle of a frame, in whole source pixels.
+///
+/// This is the window one detection pass looks at: the whole frame for an
+/// untiled pass, one tile of the grid otherwise. It lives in `ob-core` rather
+/// than beside the tiling code because `Detector::detect_regions` takes a slice
+/// of these, and the detector trait has to be describable without depending on
+/// the wrapper that happens to plan the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Region {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl Region {
+    pub fn new(x: u32, y: u32, w: u32, h: u32) -> Region {
+        Region { x, y, w, h }
+    }
+
+    /// The region covering all of `frame` — what an untiled pass looks at.
+    pub fn whole(frame: &Frame) -> Region {
+        Region {
+            x: 0,
+            y: 0,
+            w: frame.width,
+            h: frame.height,
+        }
+    }
+
+    /// Clip to a `frame_w × frame_h` frame, returning `None` when nothing of
+    /// the region falls inside it.
+    ///
+    /// Callers may hand in a window that runs off an edge — the tile planner
+    /// deliberately does, to cover the border without a runt tile — and get back
+    /// the overlapping part.
+    pub fn clamped(&self, frame_w: u32, frame_h: u32) -> Option<Region> {
+        let x = self.x.min(frame_w);
+        let y = self.y.min(frame_h);
+        let w = (x.saturating_add(self.w)).min(frame_w).saturating_sub(x);
+        let h = (y.saturating_add(self.h)).min(frame_h).saturating_sub(y);
+        (w > 0 && h > 0).then_some(Region { x, y, w, h })
+    }
+
+    pub fn width_f(&self) -> f32 {
+        self.w as f32
+    }
+
+    pub fn height_f(&self) -> f32 {
+        self.h as f32
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     #[error("frame buffer length {got} does not match width*height*3 = {expected}")]

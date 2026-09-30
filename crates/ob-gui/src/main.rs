@@ -26,6 +26,27 @@ const WINDOW_ICON: &[u8] = include_bytes!("../../../packaging/assets/window-icon
 const WINDOW_ICON_SIZE: u32 = 256;
 
 fn main() -> eframe::Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        // Hand-rolled rather than pulling clap into the GUI for one flag. On
+        // Windows this is a GUI-subsystem binary with no console attached, so
+        // nothing appears there — the About page carries the same string.
+        println!("obscura-gui {}", ob_core::version::LONG);
+        // Which providers this build has, for the same reason the CLI prints
+        // them: a CPU-only build and a GPU one are otherwise identical from the
+        // outside, and the only symptom of the wrong one is a slow job.
+        println!("\nexecution providers (in preference order):");
+        for line in ob_detect::session::execution_provider_report() {
+            println!("  {line}");
+        }
+        if !ob_detect::gpu_support_compiled_in() {
+            println!("\nThis is a CPU-only build: no GPU execution provider was compiled in.");
+        }
+        return Ok(());
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("Figura Obscura {}", env!("CARGO_PKG_VERSION")))

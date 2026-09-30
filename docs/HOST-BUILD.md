@@ -91,9 +91,38 @@ before using `--features ob-detect/rocm`.
 
 ### Confirm the GPU is actually being used
 
-Do this rather than assuming — CPU is always registered **last** as a silent
-fallback (see `execution_provider_dispatches` and the `cpu_is_always_last_ep`
-test), so every misconfiguration degrades quietly instead of erroring:
+Do this rather than assuming. CPU is always registered **last** as a fallback
+(see `execution_provider_dispatches` and the `cpu_is_always_last_ep` test), so a
+misconfiguration degrades quietly instead of erroring.
+
+**Ask the binary first.** Both binaries report their execution providers, so
+this needs no model, no job and no GPU monitor:
+
+```sh
+obscura --version             # or: obscura-gui --version, or the GUI's About page
+```
+
+```
+obscura 0.5.1 (644dd82)
+
+execution providers (in preference order):
+  CUDAExecutionProvider (ready)
+  CPUExecutionProvider (ready)
+```
+
+Three outcomes, and they mean different things:
+
+| Report | Meaning |
+| --- | --- |
+| Only `CPUExecutionProvider`, plus a "CPU-only build" note | Built without a GPU feature. Rebuild with one. |
+| `… (compiled in, missing from the linked ONNX Runtime)` | The feature was enabled but ORT has no such provider — the `rocm` trap below. The build can never use a GPU. |
+| `… (ready)` | The provider is present. It can still fail to *load* on this machine (no driver, no device); the run reports that. |
+
+**Then watch a run.** A job that loads on a GPU prints `running on
+CUDAExecutionProvider` before it starts. If the build has GPU support but the
+model loaded on CPU anyway, it says so as a warning instead of proceeding
+silently — that is the case where the provider exists but the driver or device
+does not.
 
 ```sh
 nvidia-smi dmon -s u          # or: rocm-smi --showuse / radeontop
@@ -102,6 +131,27 @@ nvidia-smi dmon -s u          # or: rocm-smi --showuse / radeontop
 
 A useful A/B: time the same batch with and without the feature flag. If the
 timings match, the GPU is not engaged.
+
+### Shipping a GPU build
+
+`--gpu webgpu` produces no `onnxruntime_providers_*` library. It links
+`libwebgpu_dawn.so` instead, and links it *directly* — a package missing that
+file does not fall back to CPU, the binary fails to start with
+`libwebgpu_dawn.so: cannot open shared object file`. `packaging/stage.sh` stages
+it and refuses any GPU build that produced no runtime library at all.
+
+Staging the libraries is not enough on its own: they sit beside the binaries in
+the tarball and under `<prefix>/lib/figura-obscura` once installed, and the
+dynamic loader searches neither. So `stage.sh` links GPU builds with
+
+```
+-C link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/../lib/figura-obscura
+```
+
+which covers both layouts, because `$ORIGIN` resolves against the binary's own
+location. Without it a webgpu build does not start at all, and a cuda build
+starts but cannot `dlopen` its providers — the silent CPU fallback once more.
+Confirm with `readelf -d <binary> | grep RUNPATH`.
 
 ## 4. Models
 
@@ -217,8 +267,21 @@ To put them on `PATH`:
 
 ```sh
 cargo install --path crates/ob-cli --features ob-detect/cuda
-cargo install --path crates/obscura-gui --features ob-detect/cuda
+cargo install --path crates/ob-gui --features ob-detect/cuda
 ```
+
+Both binaries take `--version`, and print the commit they were built from as
+well as `0.5.1`:
+
+```sh
+obscura --version          # obscura 0.5.1 (3e0e567)
+obscura-gui --version      # obscura-gui 0.5.1 (3e0e567)
+```
+
+Check it before reporting a bug: an installed binary does not update when the
+checkout does, so a crash that the working tree has already fixed usually means
+the install is older than the fix. The GUI shows the same string on its About
+page, which is the way to read it on Windows (no console is attached there).
 
 The GUI is eframe/winit on OpenGL and picks up Wayland or X11 automatically from
 `WAYLAND_DISPLAY`/`DISPLAY`. With neither set it exits immediately with

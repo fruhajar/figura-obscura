@@ -3,8 +3,8 @@
 #
 #   packaging/linux/build.sh [--ffmpeg DIR] [--gpu none|cuda|webgpu] [--skip-appimage]
 #
-# The tarball is the primary artifact — it works everywhere, it is what itch.io's
-# app installs, and its install.sh wires up the desktop entry and icons. The
+# The tarball is the primary artifact — it works everywhere, and its install.sh
+# wires up the desktop entry and icons without needing root. The
 # AppImage is a convenience for people who want a single file, and needs
 # `appimagetool` (downloaded on demand if absent).
 set -euo pipefail

@@ -1,12 +1,10 @@
 //! The Batch page: what to process, where it goes, the preview, and the log.
 
-use crate::app::{open_in_file_manager, ObApp, ToastKind};
+use crate::app::{open_in_file_manager, ObApp, RowKind, ToastKind};
 use crate::pages;
 use crate::theme;
 use egui::RichText;
-use ob_core::registry::human_bytes;
-use ob_media::{classify_resolved, MediaKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
     pages::header(
@@ -108,7 +106,7 @@ fn inputs_section(app: &mut ObApp, ui: &mut egui::Ui) {
             {
                 app.inputs.clear();
             }
-            let (files, folders) = counts(&app.inputs);
+            let (files, folders) = app.input_counts();
             ui.label(
                 RichText::new(format!("{files} file(s), {folders} folder(s)"))
                     .size(12.0)
@@ -148,21 +146,27 @@ fn inputs_section(app: &mut ObApp, ui: &mut egui::Ui) {
         }
 
         let mut remove: Option<usize> = None;
+        let running = app.is_running();
+        // Only the rows on screen are built. A 300-file batch scrolls at the
+        // same cost as a 3-file one, which is the difference between the list
+        // being a display of the batch and the list being the batch's price.
+        let row_h = ui.spacing().interact_size.y;
         egui::ScrollArea::vertical()
             .max_height(190.0)
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for (i, path) in app.inputs.iter().enumerate() {
+            .show_rows(ui, row_h, app.rows.len(), |ui, range| {
+                for i in range {
+                    let row = &app.rows[i];
                     ui.horizontal(|ui| {
-                        let (glyph, color) = kind_glyph(path);
+                        let (glyph, color) = kind_glyph(row.kind);
                         ui.label(RichText::new(glyph).color(color));
-                        ui.label(RichText::new(display_name(path)).size(13.0).color(p.text))
-                            .on_hover_text(path.display().to_string());
+                        ui.label(RichText::new(&row.name).size(13.0).color(p.text))
+                            .on_hover_text(&row.full);
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .add_enabled(
-                                    !app.is_running(),
+                                    !running,
                                     egui::Button::new(
                                         RichText::new(theme::glyph::REMOVE).size(12.0),
                                     )
@@ -173,12 +177,8 @@ fn inputs_section(app: &mut ObApp, ui: &mut egui::Ui) {
                             {
                                 remove = Some(i);
                             }
-                            if let Some(size) = file_size(path) {
-                                ui.label(
-                                    RichText::new(human_bytes(size))
-                                        .size(11.5)
-                                        .color(p.text_faint),
-                                );
+                            if let Some(size) = &row.size {
+                                ui.label(RichText::new(size).size(11.5).color(p.text_faint));
                             }
                         });
                     });
@@ -336,30 +336,22 @@ fn display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn file_size(path: &Path) -> Option<u64> {
-    let meta = std::fs::metadata(path).ok()?;
-    meta.is_file().then_some(meta.len())
-}
-
 /// A glyph distinguishing folders, images, video and unsupported files.
-fn kind_glyph(path: &Path) -> (&'static str, egui::Color32) {
+///
+/// Takes a kind already decided by [`crate::app::InputRow`] rather than
+/// deciding one from the path: working out what a file is costs a `stat` at
+/// least, and the answer does not change between frames.
+fn kind_glyph(kind: RowKind) -> (&'static str, egui::Color32) {
     use theme::glyph;
     let p = theme::palette();
-    if path.is_dir() {
-        return (glyph::FOLDER, p.accent_hover);
-    }
-    match classify_resolved(path) {
-        MediaKind::Image => (glyph::IMAGE, p.text_dim),
-        MediaKind::Video => (glyph::VIDEO, p.text_dim),
+    match kind {
+        RowKind::Folder => (glyph::FOLDER, p.accent_hover),
+        RowKind::Image => (glyph::IMAGE, p.text_dim),
+        RowKind::Video => (glyph::VIDEO, p.text_dim),
         // Flagged rather than hidden: a file the batch will skip should be
         // visible in the list, not silently dropped at run time.
-        MediaKind::Unknown => (glyph::UNSUPPORTED, p.warning),
+        RowKind::Unsupported => (glyph::UNSUPPORTED, p.warning),
     }
-}
-
-fn counts(inputs: &[PathBuf]) -> (usize, usize) {
-    let folders = inputs.iter().filter(|p| p.is_dir()).count();
-    (inputs.len() - folders, folders)
 }
 
 #[cfg(test)]
@@ -374,25 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn counts_split_files_from_folders() {
-        let dir = std::env::temp_dir();
-        let file = dir.join("ob-queue-test.png");
-        std::fs::write(&file, b"x").unwrap();
-        let (files, folders) = counts(&[dir.clone(), file.clone()]);
-        assert_eq!((files, folders), (1, 1));
-        std::fs::remove_file(&file).ok();
-    }
-
-    #[test]
     fn unsupported_files_are_flagged_not_hidden() {
         // The batch skips these; the queue must still show them so the user
         // is not left wondering why a file "did nothing". Compared against the
         // glyph table rather than literals, so changing a symbol in one place
         // does not mean editing it in two.
         use theme::glyph;
-        assert_eq!(kind_glyph(Path::new("notes.txt")).0, glyph::UNSUPPORTED);
-        assert_eq!(kind_glyph(Path::new("a.png")).0, glyph::IMAGE);
-        assert_eq!(kind_glyph(Path::new("a.mp4")).0, glyph::VIDEO);
+        assert_eq!(kind_glyph(RowKind::Unsupported).0, glyph::UNSUPPORTED);
+        assert_eq!(kind_glyph(RowKind::Image).0, glyph::IMAGE);
+        assert_eq!(kind_glyph(RowKind::Video).0, glyph::VIDEO);
         // The four kinds must stay visually distinguishable.
         assert_ne!(glyph::IMAGE, glyph::VIDEO);
         assert_ne!(glyph::IMAGE, glyph::FOLDER);

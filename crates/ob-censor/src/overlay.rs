@@ -6,20 +6,21 @@ use ob_core::censor::OverlayFit;
 use ob_core::geometry::Frame;
 
 /// Copy the frame rectangle into an owned `RgbImage`.
+///
+/// Row at a time. `put_pixel`/`get_pixel` bounds-check and recompute an offset
+/// for every pixel, which on a large blurred region is most of the cost of the
+/// copy — and both buffers are already packed RGB8, so the rows are directly
+/// assignable.
 fn crop(frame: &Frame, r: &Rect) -> RgbImage {
     let w = frame.width as usize;
-    let cw = (r.x1 - r.x0) as u32;
-    let ch = (r.y1 - r.y0) as u32;
-    let mut img = RgbImage::new(cw, ch);
+    let cw = r.x1 - r.x0;
+    let ch = r.y1 - r.y0;
+    let mut img = RgbImage::new(cw as u32, ch as u32);
+    let buf = img.as_mut();
     for (dy, y) in (r.y0..r.y1).enumerate() {
-        for (dx, x) in (r.x0..r.x1).enumerate() {
-            let p = (y * w + x) * 3;
-            img.put_pixel(
-                dx as u32,
-                dy as u32,
-                image::Rgb([frame.data[p], frame.data[p + 1], frame.data[p + 2]]),
-            );
-        }
+        let src = (y * w + r.x0) * 3;
+        let dst = dy * cw * 3;
+        buf[dst..dst + cw * 3].copy_from_slice(&frame.data[src..src + cw * 3]);
     }
     img
 }
@@ -27,14 +28,12 @@ fn crop(frame: &Frame, r: &Rect) -> RgbImage {
 /// Write an `RgbImage` back into the frame rectangle (sizes must match).
 fn paste(frame: &mut Frame, r: &Rect, img: &RgbImage) {
     let w = frame.width as usize;
+    let cw = r.x1 - r.x0;
+    let buf = img.as_raw();
     for (dy, y) in (r.y0..r.y1).enumerate() {
-        for (dx, x) in (r.x0..r.x1).enumerate() {
-            let px = img.get_pixel(dx as u32, dy as u32);
-            let p = (y * w + x) * 3;
-            frame.data[p] = px[0];
-            frame.data[p + 1] = px[1];
-            frame.data[p + 2] = px[2];
-        }
+        let dst = (y * w + r.x0) * 3;
+        let src = dy * cw * 3;
+        frame.data[dst..dst + cw * 3].copy_from_slice(&buf[src..src + cw * 3]);
     }
 }
 

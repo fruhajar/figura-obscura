@@ -120,11 +120,27 @@ try {
 
     Copy-Item 'packaging\common\THIRD-PARTY.md' $stage
     Copy-Item 'README.md' $stage
+    # The product's own licence. THIRD-PARTY.md covers what we redistribute and
+    # says nothing about what we wrote, so both ship. The installer's [Files]
+    # section requires this one without skipifsourcedoesntexist, so omitting it
+    # fails the ISCC step rather than shipping a package quietly missing it.
+    Copy-Item 'LICENSE' $stage
     if (Test-Path 'packaging\common\licenses') {
         Copy-Item 'packaging\common\licenses\*' "$stage\licenses" -ErrorAction SilentlyContinue
     }
 
     # --- 4. verify the stage before wrapping it -----------------------------
+    # Every path the .iss requires unconditionally, checked here so a missing
+    # one is named at the staging step instead of surfacing as an Inno Setup
+    # error about a source file. The two lists have to agree and nothing else
+    # makes them; this is what notices when they stop agreeing.
+    Write-Host '==> verifying the staged tree'
+    foreach ($required in 'obscura.exe', 'obscura-gui.exe', 'LICENSE', 'THIRD-PARTY.md', 'README.md') {
+        if (-not (Test-Path (Join-Path $stage $required))) {
+            throw "staging did not produce $required, which packaging\windows\figura-obscura.iss requires"
+        }
+    }
+
     Write-Host '==> verifying staged binaries'
     & "$stage\obscura.exe" models list | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'staged obscura.exe does not run' }
