@@ -82,6 +82,33 @@ skip the file, or blank the frame entirely. `Blank` is the fail-closed choice �
 obliterate rather than risk a leak. This is centralised in one function
 specifically so the three callers cannot drift apart.
 
+### Hand-drawn regions enter the pipeline at the censor stage
+
+The GUI's Edit page is the manual fallback for what no model will find — a
+licence plate, a face in the background, a region a detector missed. It skips
+detect and filter and hands its boxes straight to `ob_censor::apply`, one call
+per box so each can carry its own style. That is the whole integration: a
+hand-drawn region is censored by the same code as a detected one, so what the
+canvas shows is what the pixels will be.
+
+Two differences from the batch, both deliberate. Padding is zero, because the
+box *is* what the user drew and quietly growing it by the batch's 10% would make
+the drawn outline a lie. And the category is a placeholder that nothing reads:
+per-part overrides are empty for a manual box, since the taxonomy describes what
+a detector saw and nobody classified this. Corner rounding, which the batch
+holds once for the whole profile, is per box here — it is part of a box's
+appearance, and a control that reshaped every box already drawn would be the
+only one on the page that did not act on the selection.
+
+The document and its undo history (`ob-gui/src/edit.rs`) are GUI-only and
+deliberately pure — no context, no I/O — so the rules that are easy to get
+subtly wrong are testable on a machine with no display server: what counts as
+one undo step, where a corner handle sits, what a drag that leaves the frame
+means. Undo is whole-document snapshots rather than inverse commands: the
+document is a few rectangles, so every edit is undoable by construction instead
+of by remembering to write a matching inverse for each one. A continuous gesture
+coalesces into one step by key, so a drag undoes in one press rather than sixty.
+
 ## Detection
 
 ### Letterboxing

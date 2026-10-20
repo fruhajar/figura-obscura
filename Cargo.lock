@@ -2764,6 +2764,7 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "ob-censor",
  "ob-core",
  "ob-detect",
  "ob-job",

@@ -8,6 +8,7 @@
 
 mod app;
 mod downloads;
+mod edit;
 mod pages;
 mod prefs;
 mod run;
