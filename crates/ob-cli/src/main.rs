@@ -484,6 +484,18 @@ fn cmd_process(args: ProcessArgs) -> Result<()> {
     let progress = |ev: ProgressEvent| match ev {
         ProgressEvent::Discovered(n) => bar.set_length(n as u64),
         ProgressEvent::FileStarted(p) => bar.set_message(p.display().to_string()),
+        // The bar counts files, so on a single long video it has nothing to
+        // show: `{pos}/{len}` stays 0/1 from start to finish. The frame counter
+        // goes in the message, where it is the only moving part on screen.
+        // indicatif rate-limits its own redraws, so this costs a formatted
+        // string per event and no terminal traffic it would not have had.
+        ProgressEvent::FrameProgress { path, frame, total } => {
+            let where_in = match total {
+                Some(t) => format!("frame {frame}/{t}"),
+                None => format!("frame {frame}"),
+            };
+            bar.set_message(format!("{} ({where_in})", path.display()));
+        }
         ProgressEvent::FileDone { path, regions } => {
             bar.inc(1);
             // A dry run exists to be read, so print as it goes rather than

@@ -251,15 +251,24 @@ fn log_section(app: &mut ObApp, ui: &mut egui::Ui) {
         });
 
         if let Some(current) = &app.run_state.current {
-            ui.label(
-                RichText::new(format!(
-                    "{} {}",
-                    theme::glyph::RUNNING,
-                    display_name(current)
-                ))
-                .size(12.0)
-                .color(p.accent_hover),
-            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}",
+                        theme::glyph::RUNNING,
+                        display_name(current)
+                    ))
+                    .size(12.0)
+                    .color(p.accent_hover),
+                );
+                // The frame counter is the whole answer to "is it stuck": a
+                // long clip reports nothing else between starting and finishing,
+                // and a number that advances is the difference between waiting
+                // and killing the run.
+                if let Some(text) = frame_counter(app.run_state.current_frames) {
+                    ui.label(RichText::new(text).size(11.5).color(p.text_faint));
+                }
+            });
         }
         ui.add_space(4.0);
 
@@ -336,6 +345,20 @@ fn display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// The in-flight video's position, as a line to put beside its name.
+///
+/// `None` for a still, which is one frame and finishes or fails as a unit, so a
+/// counter reading "frame 1 / 1" would be noise. A clip that declared no length
+/// shows a bare count: it is still the one thing that distinguishes a slow run
+/// from a stuck one, and padding it with a guessed total would be a worse answer
+/// than no total.
+fn frame_counter(frames: Option<(u64, Option<u64>)>) -> Option<String> {
+    match frames? {
+        (frame, Some(total)) => Some(format!("frame {frame} / {total}")),
+        (frame, None) => Some(format!("frame {frame}")),
+    }
+}
+
 /// A glyph distinguishing folders, images, video and unsupported files.
 ///
 /// Takes a kind already decided by [`crate::app::InputRow`] rather than
@@ -363,6 +386,19 @@ mod tests {
         assert_eq!(display_name(Path::new("/a/b/c.png")), "c.png");
         // A path with no final component still renders as something.
         assert!(!display_name(Path::new("/")).is_empty());
+    }
+
+    #[test]
+    fn the_frame_counter_says_what_it_knows_and_no_more() {
+        assert_eq!(
+            frame_counter(Some((1234, Some(5400)))).as_deref(),
+            Some("frame 1234 / 5400")
+        );
+        // No declared length: a count alone still answers "is it moving", and
+        // is honest about not knowing how far there is to go.
+        assert_eq!(frame_counter(Some((7, None))).as_deref(), Some("frame 7"));
+        // A still is one frame and lands as a unit; "frame 1 / 1" is noise.
+        assert_eq!(frame_counter(None), None);
     }
 
     #[test]

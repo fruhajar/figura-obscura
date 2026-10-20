@@ -2,32 +2,27 @@ Offline batch censoring for images and video — GUI and CLI. Nothing on the
 processing path touches the network; detector models are downloaded once, on
 first run.
 
-## What changed since 0.1.0
+## What changed since 0.5.1
 
-- **Image batches run roughly twice as fast.** The release profile had been
-  optimising for size, which gives up exactly what this program spends its time
-  in: pixel loops and decompression. A 20-image batch goes from 1.37 s to
-  0.62 s, a 10-second 1080p video from 6.88 s to 4.46 s. It costs 3.3 MB of
-  binary. Letterboxing a 4K frame for the detector is 22× faster, and the
-  censor renderers 3–7×.
-- **The detector sizes its thread pool from physical cores**, not logical ones.
-  Giving compute-bound inference twice the threads it wants was measurably
-  slower than leaving it alone.
-- **Long GIFs no longer grow without bound.** The palette filter graph held
-  every frame in memory until end of input, so a long clip grew until the
-  machine swapped, which is what looked like a hang. Frames now pass through a
-  lossless intermediate; the output is byte-identical, and peak memory on a
-  600-frame clip drops from 844 MB to 170 MB.
-- **The window stays responsive with very large file lists.**
-- **`--version` and the About page name the execution provider actually in
-  use**, so a silent CPU fallback cannot pass for a GPU run.
-- **The output codec follows the container you chose**, rather than the
-  container being pushed around by the codec.
-- **An installed GPU build finds its own runtime libraries** (Linux). Before
-  this, a webgpu install did not start at all and a cuda install fell back to
-  CPU without saying so.
-- The Windows installer's final page opens the copy of the app it just
-  installed, not whichever one was already on `PATH`.
+- **A new Edit page censors one image by hand**, for what no detector will
+  find: a licence plate, a face in the background, a region the model missed.
+  Drag boxes onto the picture, give each one its own style and corner rounding
+  from the same picker the Tuning page uses, then save the result to a new
+  file. Ctrl-click adds boxes to the selection, so a style change lands on all
+  of them at once; Ctrl-Z and Ctrl-Y undo and redo, and a whole drag is one
+  step rather than sixty. A hand-drawn box goes through the same censor code as
+  a detected one, so what the canvas shows is what the pixels become.
+- **Video says where it has got to while it runs.** The activity list shows
+  `frame 1234 / 5400` beside the file, the CLI puts the same counter in its
+  progress bar, and the bar and ETA both move with it instead of waiting for
+  the file to finish. On a batch of one long clip the bar used to sit at 0%
+  from start to end, which is exactly where a 4K video legitimately taking tens
+  of minutes cannot be told apart from a hang.
+- **The estimate holds up on long clips at a low detection rate.** A video
+  frame's inference and its decode, composite and encode are now costed
+  separately: the first as a step function of frame size, the second by area.
+  Counting the skipped frames as free made a clip at one detection in thirty
+  look an order of magnitude cheaper than it was.
 
 ## Install
 

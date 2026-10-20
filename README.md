@@ -13,7 +13,7 @@ with a live preview, and **`obscura`**, a command-line tool for batches and
 scripts.
 
 > **Status:** feature complete and packaged. Installers exist for Windows, Linux
-> and macOS, and `cargo build --release`, `cargo test` (274 tests) and
+> and macOS, and `cargo build --release`, `cargo test` (285 tests) and
 > `cargo clippy --all-targets` are green on rustc 1.98.0.
 >
 > Two things are genuinely unverified, and both are worth knowing before you
@@ -228,6 +228,14 @@ composition for the same reason.
 Videos whose length cannot be read are excluded from the total and reported
 separately ("plus 2 video(s) whose length could not be read") rather than having
 a duration invented for them.
+
+A video also reports where it has got to while it runs. The activity list shows
+`frame 1234 / 5400` beside the file, the CLI puts the same counter in its
+progress bar, and the progress bar and ETA both move with it rather than waiting
+for the file to finish. This matters most on the batch of one long clip: a 4K
+video can legitimately take tens of minutes, and a counter that advances is the
+difference between waiting and killing the run. A clip that declared no length
+shows a bare frame count, since a guessed denominator would be worse than none.
 
 ## Packaging
 

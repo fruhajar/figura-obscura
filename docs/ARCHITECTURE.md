@@ -250,6 +250,25 @@ weights; the absolute seconds-per-unit is calibrated from real runs and
 persisted, so an error in the constants stretches every item equally and cancels
 out of the ratio.
 
+A video frame's two halves are costed differently, because they behave
+differently. Inference is a step function of the frame's size, so it comes from
+the tile planner (nine passes at 1080p, thirteen at 4K, with the default 320px
+input). Decode, composite and encode are close to linear in pixels, so they are
+costed by **area**, as a per-1080p-frame constant scaled by the frame's own area.
+Inference dominates at the default `detect_every` of 3, where the codec term is a
+couple of percent of a 4K clip; by one detection in thirty it is a third, and costing the skipped frames as free made a long clip at a low detect
+rate look an order of magnitude cheaper than it was.
+
+Progress is credited **mid-file**, not only when a file lands.
+`ProgressEvent::FrameProgress` reports the encoder's position at most ten times a
+second, and the GUI credits the file's measured work in proportion to the frames
+it has finished. That is what makes a batch of one video legible: counting
+finished files, such a run reported zero work from start to end, so the bar sat
+at 0%, the ETA never moved off the scan's opening guess, and the calibration
+received no observation to learn from until the run was over. The share is
+derived from the scan's own total for the file rather than from a second
+per-frame cost, so the bar cannot advance at a rate the ETA disagrees with.
+
 ## Invariants worth not breaking
 
 - **Fail-closed is a user-visible policy**, answered identically by the batch,

@@ -479,11 +479,7 @@ impl ObApp {
 
         // Hand the run the measurement and this machine's rate, so the ETA is
         // there from the first frame rather than after the first file.
-        self.run_state = RunState {
-            workload: self.workload().map(Arc::new),
-            calibration: self.calibration(),
-            ..RunState::default()
-        };
+        self.run_state = RunState::starting(self.workload().map(Arc::new), self.calibration());
         self.run = Some(RunHandle::spawn(
             &self.prefs.profile,
             &self.settings,

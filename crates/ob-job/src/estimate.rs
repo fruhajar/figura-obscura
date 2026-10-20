@@ -37,14 +37,38 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Cost of decoding and re-encoding one video frame, relative to one inference
-/// pass.
+/// Cost of decoding, compositing and re-encoding one **1080p** frame, relative
+/// to one inference pass at the model's input size.
 ///
 /// Video work is not all inference: every frame is decoded, composited and
 /// re-encoded even on the frames the detector skips. This is a rough ratio, not
 /// a measurement — it exists so that a long video at `detect_every = 10` is not
 /// costed as though nine tenths of it were free.
-const DECODE_COST_PER_FRAME: f64 = 0.05;
+const CODEC_COST_PER_1080P_FRAME: f64 = 0.05;
+
+/// The resolution [`CODEC_COST_PER_1080P_FRAME`] is quoted at.
+const CODEC_BASELINE_PIXELS: f64 = 1920.0 * 1080.0;
+
+/// Codec cost for one frame of the given size.
+///
+/// Scaled by **area**, where the inference term is scaled by tile count. The
+/// two parts of a video frame's cost genuinely behave differently: tiling is a
+/// step function of the frame's size (a 4K frame is thirteen passes, a 1080p one
+/// four), while decode, composite and encode are all close to linear in pixels.
+/// Holding the codec term flat, as this did, under-costed a 4K clip by about
+/// three quarters of its codec work and over-costed a 360p one by the same
+/// shape of error. That is most visible exactly where the estimate matters,
+/// on a mixed batch where the resolutions differ by a factor of ten.
+///
+/// Linear in pixels is the right first approximation and not more: x264 at a
+/// fixed preset is roughly per-pixel, and so is the rgb24 copy through both
+/// pipes. What it does not model is the preset, the codec or the source
+/// bitrate, all of which move the real figure by a factor that
+/// [`Calibration`] absorbs as long as it is roughly constant across the batch.
+fn codec_cost_per_frame(w: u32, h: u32) -> f64 {
+    let pixels = w as f64 * h as f64;
+    CODEC_COST_PER_1080P_FRAME * pixels / CODEC_BASELINE_PIXELS
+}
 
 /// Assumed size for an item whose dimensions could not be read.
 ///
@@ -127,7 +151,7 @@ impl ProbedItem {
             MediaKind::Video => match self.frames {
                 Some(n) => {
                     model.detected_frames(n) * model.passes_per_frame(w, h)
-                        + n as f64 * DECODE_COST_PER_FRAME
+                        + n as f64 * codec_cost_per_frame(w, h)
                 }
                 None => 0.0,
             },
@@ -433,6 +457,82 @@ mod tests {
         assert_eq!(
             three.passes_per_frame(3840, 2160),
             one.passes_per_frame(3840, 2160) * 3.0
+        );
+    }
+
+    fn clip(w: u32, h: u32, frames: u64) -> ProbedItem {
+        ProbedItem {
+            path: PathBuf::from("clip.mp4"),
+            kind: MediaKind::Video,
+            dims: Some((w, h)),
+            frames: Some(frames),
+            sizing: Sizing::Probed,
+        }
+    }
+
+    #[test]
+    fn the_codec_term_scales_with_the_frame_area() {
+        // Quoted at 1080p, so that is the one size where the constant appears
+        // unscaled. Everything else is read off it by area.
+        assert!((codec_cost_per_frame(1920, 1080) - CODEC_COST_PER_1080P_FRAME).abs() < 1e-12);
+        let ratio = codec_cost_per_frame(3840, 2160) / codec_cost_per_frame(1920, 1080);
+        assert!(
+            (ratio - 4.0).abs() < 1e-9,
+            "4K is four times the area: {ratio}"
+        );
+    }
+
+    #[test]
+    fn resolution_moves_a_video_estimate_even_with_tiling_off() {
+        // With tiling off the inference term is one pass whatever the size, so
+        // this isolates the codec half. Under the old flat per-frame constant
+        // these two clips costed *identically*, which is the error the area
+        // scaling fixes: decode, composite and encode are all per-pixel.
+        let m = CostModel {
+            tiling: TilingConfig {
+                mode: TilingMode::Off,
+                ..Default::default()
+            },
+            ..model()
+        };
+        assert_eq!(m.passes_per_frame(3840, 2160), m.passes_per_frame(640, 360));
+
+        let uhd = clip(3840, 2160, 1000).work(&m);
+        let sd = clip(640, 360, 1000).work(&m);
+        assert!(
+            uhd > sd,
+            "a 4K clip costed {uhd} against {sd} for the same length at 360p"
+        );
+    }
+
+    #[test]
+    fn the_codec_share_grows_as_the_detect_rate_falls() {
+        // Why the term exists at all. Inference dominates at the default rate,
+        // which is why it is the unit the estimate is denominated in; but it
+        // scales with `detect_every` and the codec work does not, so by one
+        // detection in thirty the frames the detector skips are a third of the
+        // run. Costing them at zero is what made a long clip at a low detect
+        // rate look an order of magnitude cheaper than it is.
+        let codec_share = |detect_every: u32| {
+            let m = CostModel {
+                detect_every,
+                ..model()
+            };
+            let frames = 10_000;
+            let total = clip(3840, 2160, frames).work(&m);
+            let codec = frames as f64 * codec_cost_per_frame(3840, 2160);
+            codec / total
+        };
+
+        let dense = codec_share(1);
+        let sparse = codec_share(30);
+        assert!(
+            dense < 0.02,
+            "inference has to dominate at every frame, not {dense:.3}"
+        );
+        assert!(
+            sparse > 0.25,
+            "the skipped frames are not free at one in thirty: {sparse:.3}"
         );
     }
 
