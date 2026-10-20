@@ -3,7 +3,7 @@
 Releases are **tag-driven GitHub releases**, built by CI on all three platforms:
 
 ```sh
-git push origin v0.5.1
+git push origin v0.6.0
 ```
 
 `.github/workflows/release.yml` builds Windows, Linux and macOS on their own
@@ -91,8 +91,8 @@ than three runners. The bump commit therefore has to land before the tag.
 ## 2. Tag and push
 
 ```sh
-git tag -a v0.5.1 -m "Figura Obscura 0.5.1"
-git push origin v0.5.1
+git tag -a v0.6.0 -m "Figura Obscura 0.6.0"
+git push origin v0.6.0
 ```
 
 That is the whole release build. Nine minutes later there is a draft release

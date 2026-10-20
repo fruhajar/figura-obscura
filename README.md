@@ -13,7 +13,7 @@ with a live preview, and **`obscura`**, a command-line tool for batches and
 scripts.
 
 > **Status:** feature complete and packaged. Installers exist for Windows, Linux
-> and macOS, and `cargo build --release`, `cargo test` (220 tests) and
+> and macOS, and `cargo build --release`, `cargo test` (285 tests) and
 > `cargo clippy --all-targets` are green on rustc 1.98.0.
 >
 > Two things are genuinely unverified, and both are worth knowing before you
@@ -178,6 +178,19 @@ everything except the input and output ends.
 - The preview shows the first file in the batch, or any **Sample…** you pick, so
   a representative frame can be tuned against without joining the queue. Videos
   preview their first frame.
+- **Edit** censors one image by hand, for what no detector will find: a region a
+  model missed, a licence plate, a face in the background. Drag boxes onto the
+  picture, give each one its own style and corner rounding from the same picker
+  the Tuning page uses, and save the result to a new file. Drag a box to move
+  it, a corner to resize it — the corner target is wider than the handle it
+  draws, because pressing near a corner is nearly always a resize. **Ctrl-click**
+  adds boxes to the selection, and a style change then lands on all of them at
+  once; a selection moves as one shape. The boxes are a list you can select,
+  hide, reorder and delete, and every change — drawing, moving, resizing,
+  restyling — is undoable with **Ctrl-Z** and redoable with **Ctrl-Y**
+  (**Ctrl-Shift-Z** works too). A whole drag is one step, not sixty. Dropping an
+  image on the window while this page is open opens it here instead of queueing
+  it.
 - **Models** installs, re-downloads and removes model files, with per-model
   progress, a cancel button, and the licence and source of each.
 - Settings are saved to `~/.config/figura-obscura/settings.json`, models to
@@ -215,6 +228,14 @@ composition for the same reason.
 Videos whose length cannot be read are excluded from the total and reported
 separately ("plus 2 video(s) whose length could not be read") rather than having
 a duration invented for them.
+
+A video also reports where it has got to while it runs. The activity list shows
+`frame 1234 / 5400` beside the file, the CLI puts the same counter in its
+progress bar, and the progress bar and ETA both move with it rather than waiting
+for the file to finish. This matters most on the batch of one long clip: a 4K
+video can legitimately take tens of minutes, and a counter that advances is the
+difference between waiting and killing the run. A clip that declared no length
+shows a bare frame count, since a guessed denominator would be worse than none.
 
 ## Packaging
 

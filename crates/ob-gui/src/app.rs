@@ -292,6 +292,11 @@ pub struct ObApp {
     /// changed batch re-scans and an unchanged one never does.
     pub probed_key: Option<u64>,
 
+    /// The manual editor's page state: the open image, its hand-drawn boxes and
+    /// their undo history. Deliberately not persisted — a document is one
+    /// image's worth of work, finished when it is saved.
+    pub editor: crate::edit::EditorState,
+
     pub toast: Option<Toast>,
     /// ffmpeg/ffprobe that could not be run, checked once at startup.
     pub missing_tools: Vec<Tool>,
@@ -354,6 +359,7 @@ impl Default for ObApp {
             probed: None,
             estimate_job: None,
             probed_key: None,
+            editor: crate::edit::EditorState::default(),
             toast: None,
             missing_tools: ob_media::tools::missing_tools(),
             show_setup,
@@ -473,11 +479,7 @@ impl ObApp {
 
         // Hand the run the measurement and this machine's rate, so the ETA is
         // there from the first frame rather than after the first file.
-        self.run_state = RunState {
-            workload: self.workload().map(Arc::new),
-            calibration: self.calibration(),
-            ..RunState::default()
-        };
+        self.run_state = RunState::starting(self.workload().map(Arc::new), self.calibration());
         self.run = Some(RunHandle::spawn(
             &self.prefs.profile,
             &self.settings,
@@ -786,12 +788,27 @@ impl ObApp {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        if !dropped.is_empty() {
-            let n = dropped.len();
-            self.add_inputs(dropped);
-            self.prefs.tab = Tab::Queue;
-            self.toast(format!("Added {n} item(s)."), ToastKind::Success);
+        if dropped.is_empty() {
+            return;
         }
+        // On the Edit page a dropped image is the thing to edit, not a batch
+        // item: someone who dragged a picture onto the canvas they are drawing
+        // on did not ask to queue it. Anything else there (a video, a folder)
+        // still goes to the batch.
+        if self.prefs.tab == Tab::Edit {
+            if let Some(path) = dropped
+                .iter()
+                .find(|p| crate::pages::editor::wants_drop(p))
+                .cloned()
+            {
+                crate::pages::editor::load(self, path);
+                return;
+            }
+        }
+        let n = dropped.len();
+        self.add_inputs(dropped);
+        self.prefs.tab = Tab::Queue;
+        self.toast(format!("Added {n} item(s)."), ToastKind::Success);
     }
 
     // --- chrome ----------------------------------------------------------
@@ -1034,23 +1051,30 @@ impl ObApp {
     }
 }
 
+/// An RGB8 frame as an egui image, ready to upload.
+///
+/// Shared with the editor, which re-uploads into an existing texture rather
+/// than allocating a new one per edit.
+pub fn color_image(frame: &ob_core::geometry::Frame) -> egui::ColorImage {
+    let pixels: Vec<egui::Color32> = frame
+        .data
+        .chunks_exact(3)
+        .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
+        .collect();
+    egui::ColorImage {
+        size: [frame.width as usize, frame.height as usize],
+        pixels,
+    }
+}
+
 /// Upload a frame to the GPU as an egui texture.
 fn load_texture(
     ctx: &egui::Context,
     name: &str,
     frame: &ob_core::geometry::Frame,
 ) -> egui::TextureHandle {
-    let pixels: Vec<egui::Color32> = frame
-        .data
-        .chunks_exact(3)
-        .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
-        .collect();
-    let img = egui::ColorImage {
-        size: [frame.width as usize, frame.height as usize],
-        pixels,
-    };
     // Linear filtering: previews are usually shown scaled down to fit.
-    ctx.load_texture(name, img, egui::TextureOptions::LINEAR)
+    ctx.load_texture(name, color_image(frame), egui::TextureOptions::LINEAR)
 }
 
 /// Open a path in the platform file manager.
@@ -1151,6 +1175,7 @@ impl ObApp {
                 match self.prefs.tab {
                     Tab::Queue => crate::pages::queue::show(self, ui),
                     Tab::Tuning => crate::pages::tuning::show(self, ui),
+                    Tab::Edit => crate::pages::editor::show(self, ui),
                     Tab::Models => crate::pages::models::show(self, ui),
                     Tab::About => crate::pages::about::show(self, ui),
                 }
@@ -1159,7 +1184,7 @@ impl ObApp {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::prefs::Tab;
     use std::sync::{Mutex, MutexGuard};
@@ -1170,7 +1195,7 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// A temp directory that cleans itself up even if the test panics.
-    pub(super) struct TestDir {
+    pub(crate) struct TestDir {
         _lock: MutexGuard<'static, ()>,
         path: PathBuf,
     }
@@ -1192,7 +1217,7 @@ mod tests {
 
     /// Build an app against a private config directory so tests never read or
     /// write the developer's real settings.
-    pub(super) fn test_app(name: &str) -> (ObApp, TestDir) {
+    pub(crate) fn test_app(name: &str) -> (ObApp, TestDir) {
         let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::env::temp_dir().join(format!("ob-app-test-{name}"));
         let _ = std::fs::remove_dir_all(&path);
@@ -1922,6 +1947,52 @@ mod screenshots {
         canvas
             .save(&out_dir().join("09-tuning-cross-examination.png"))
             .unwrap();
+    }
+
+    /// The Edit page in use: an image with hand-drawn boxes in three styles,
+    /// one of them selected and showing its handles.
+    #[test]
+    fn render_editor() {
+        use ob_core::censor::CensorStyle;
+        use ob_core::geometry::BBox;
+
+        let (mut app, _dir) = test_app("shot-editor");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Edit;
+        app.editor.load(
+            std::path::PathBuf::from("beach-01.jpg"),
+            sample_frame(720, 480),
+        );
+
+        // One box per style, so the screenshot shows what each actually does to
+        // pixels rather than only that the controls drew. Rounding is per box,
+        // so one of them carries it.
+        app.editor.new_style = CensorStyle::Pixelate { block: 18 };
+        let pixelated = app.editor.add_box(BBox::new(360.0, 120.0, 560.0, 360.0));
+        app.editor.new_style = CensorStyle::SolidFill {
+            color: [0, 0, 0, 255],
+        };
+        app.editor.new_rounding = 0.5;
+        app.editor.add_box(BBox::new(60.0, 60.0, 180.0, 140.0));
+        app.editor.new_style = CensorStyle::Blur { sigma: 9.0 };
+        app.editor.new_rounding = 0.0;
+        let selected = app.editor.add_box(BBox::new(120.0, 250.0, 300.0, 420.0));
+        // Two boxes picked, as Ctrl-click leaves it: the style controls then
+        // act on both.
+        app.editor.select_only(Some(selected));
+        app.editor.toggle_selected(pixelated);
+
+        shoot("11-editor", &mut app);
+    }
+
+    /// The Edit page before anything is loaded: what the canvas says when it
+    /// has nothing to show.
+    #[test]
+    fn render_editor_empty() {
+        let (mut app, _dir) = test_app("shot-editor-empty");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Edit;
+        shoot("12-editor-empty", &mut app);
     }
 
     #[test]

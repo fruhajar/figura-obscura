@@ -149,6 +149,10 @@ pub struct RunState {
     pub done: usize,
     pub failed: usize,
     pub current: Option<PathBuf>,
+    /// The in-flight video's frame counter: frames finished, and the clip's
+    /// total when it declared one. `None` for a still, or before the first
+    /// frame lands.
+    pub current_frames: Option<(u64, Option<u64>)>,
     pub log: VecDeque<LogEntry>,
     pub started: Option<Instant>,
     /// Set when the run ends; drives the summary line and the "Open output"
@@ -157,8 +161,14 @@ pub struct RunState {
     /// The measured batch, when a scan finished before the run started.
     /// Progress and ETA fall back to counting files without it.
     pub workload: Option<Arc<Workload>>,
-    /// Work units completed, by the scan's reckoning.
+    /// Work units completed, by the scan's reckoning. Finished files only.
     pub done_work: f64,
+    /// The in-flight file's work, as far as its frame counter has got.
+    ///
+    /// Kept apart from `done_work` rather than added into it so that the file's
+    /// own `FileDone` can credit its whole cost without counting the part the
+    /// frames already reported twice. Reset when a file starts or ends.
+    current_work: f64,
     /// Seconds per work unit — seeded from the last run on this machine and
     /// refined as this one proceeds.
     pub calibration: Calibration,
@@ -174,6 +184,21 @@ pub struct Finished {
 }
 
 impl RunState {
+    /// A fresh state for a run that is about to start, carrying the scan's
+    /// measurement and this machine's learned rate so the ETA exists from the
+    /// first frame rather than from the first finished file.
+    ///
+    /// A constructor rather than `RunState { .. ..Default::default() }` at the
+    /// call site because the work accounting is not all public: `current_work`
+    /// is one half of a pair with `done_work` and has to start level with it.
+    pub fn starting(workload: Option<Arc<Workload>>, calibration: Calibration) -> Self {
+        Self {
+            workload,
+            calibration,
+            ..Self::default()
+        }
+    }
+
     fn push_log(&mut self, entry: LogEntry) {
         if self.log.len() >= LOG_CAPACITY {
             self.log.pop_front();
@@ -189,7 +214,7 @@ impl RunState {
     /// rate.
     pub fn fraction(&self) -> Option<f32> {
         if let Some(w) = self.workload.as_ref().filter(|w| !w.is_empty()) {
-            return Some((self.done_work / w.total_work).clamp(0.0, 1.0) as f32);
+            return Some((self.credited_work() / w.total_work).clamp(0.0, 1.0) as f32);
         }
         if self.total == 0 {
             return None;
@@ -197,10 +222,23 @@ impl RunState {
         Some((self.done as f32 / self.total as f32).clamp(0.0, 1.0))
     }
 
+    /// Work credited so far: finished files, plus how far into the current one
+    /// its frame counter has reached.
+    ///
+    /// The mid-file half is what makes a one-video run legible at all. Counting
+    /// only finished files, a batch of a single clip reported zero work for its
+    /// entire duration: the bar sat at 0%, the ETA never moved off the scan's
+    /// opening guess, and the calibration below never received an observation,
+    /// so a machine whose real rate was ten times the saved one stayed wrong
+    /// until the run was over.
+    fn credited_work(&self) -> f64 {
+        self.done_work + self.current_work
+    }
+
     /// Work units left to do, when the batch was measured.
     pub fn remaining_work(&self) -> Option<f64> {
         let w = self.workload.as_ref().filter(|w| !w.is_empty())?;
-        Some((w.total_work - self.done_work).max(0.0))
+        Some((w.total_work - self.credited_work()).max(0.0))
     }
 
     /// Seconds remaining.
@@ -231,19 +269,57 @@ impl RunState {
     /// previous machine's rate — or on the built-in default — converges on the
     /// truth within the first few files instead of staying wrong all run.
     fn recalibrate(&mut self) {
-        let (Some(started), true) = (self.started, self.done_work > 0.0) else {
+        let credited = self.credited_work();
+        let (Some(started), true) = (self.started, credited > 0.0) else {
             return;
         };
         self.calibration
-            .observe(self.done_work, started.elapsed().as_secs_f64());
+            .observe(credited, started.elapsed().as_secs_f64());
     }
 
     /// Credit `path`'s work as done. Unknown paths (an unscanned batch, or a
     /// file that appeared after the scan) simply do not move the weighted bar.
     fn credit(&mut self, path: &Path) {
+        // Whatever the frames reported is now superseded by the whole file's
+        // cost, so it is dropped rather than added to.
+        self.current_work = 0.0;
+        self.current_frames = None;
         if let Some(w) = self.workload.as_ref().and_then(|w| w.work_for(path)) {
             self.done_work += w;
         }
+        self.recalibrate();
+    }
+
+    /// Record the in-flight video's frame counter, and credit its share.
+    ///
+    /// The share is proportional, the file's total work times the fraction of
+    /// its frames that are done, rather than a per-frame figure computed here.
+    /// Every frame of one clip is the same size, so the estimate's own total for
+    /// the file divided by its length *is* the per-frame cost, and deriving it
+    /// from the scan means a tweak to the cost model cannot leave the bar
+    /// advancing at a rate the ETA disagrees with.
+    ///
+    /// A clip that declared no length still updates the counter, which is the
+    /// part that answers "is it stuck". It credits nothing: with no denominator
+    /// there is no fraction, and the scan excluded it from the total anyway.
+    fn note_frame(&mut self, path: &Path, frame: u64, total: Option<u64>) {
+        if self.current.as_deref() != Some(path) {
+            // A file we never saw start: trust the event over our own state
+            // rather than attributing its frames to the previous file.
+            self.current = Some(path.to_path_buf());
+            self.current_work = 0.0;
+        }
+        self.current_frames = Some((frame, total));
+
+        let share = match total.filter(|t| *t > 0) {
+            Some(t) => (frame as f64 / t as f64).clamp(0.0, 1.0),
+            None => return,
+        };
+        self.current_work = self
+            .workload
+            .as_ref()
+            .and_then(|w| w.work_for(path))
+            .map_or(0.0, |w| w * share);
         self.recalibrate();
     }
 
@@ -356,7 +432,14 @@ fn apply_event(ev: ProgressEvent, state: &mut RunState) {
             state.total = n;
             state.started = Some(Instant::now());
         }
-        ProgressEvent::FileStarted(p) => state.current = Some(p),
+        ProgressEvent::FileStarted(p) => {
+            state.current = Some(p);
+            state.current_frames = None;
+            state.current_work = 0.0;
+        }
+        ProgressEvent::FrameProgress { path, frame, total } => {
+            state.note_frame(&path, frame, total)
+        }
         ProgressEvent::FileDone { path, regions } => {
             state.done += 1;
             state.credit(&path);
@@ -382,6 +465,10 @@ fn apply_event(ev: ProgressEvent, state: &mut RunState) {
             // Recorded on the Finished event, which always follows; setting a
             // flag here keeps the two in one place.
             state.current = None;
+            // The counter goes, but `current_work` stays: the frames of the
+            // abandoned video really were processed, and zeroing it would walk
+            // the bar backwards at the moment the user pressed Stop.
+            state.current_frames = None;
             state.finished = Some(Finished {
                 ok: state.done - state.failed,
                 failed: state.failed,
@@ -692,6 +779,106 @@ mod tests {
         // It consumed most of its cost getting to the failure; leaving it
         // uncredited would strand the bar short of 100% for the whole run.
         assert!((s.fraction().unwrap() - 0.9).abs() < 1e-6);
+    }
+
+    /// A measured batch of exactly one video: the case the whole frame-progress
+    /// path exists for, and the one where counting finished files says nothing
+    /// at all until the run is over.
+    fn one_video_state() -> RunState {
+        use ob_job::estimate::{ItemCost, Sizing};
+        let mut w = Workload::default();
+        w.push(ItemCost {
+            path: PathBuf::from("clip.mp4"),
+            kind: ob_media::MediaKind::Video,
+            work: 1000.0,
+            sizing: Sizing::Probed,
+        });
+        let mut s = RunState::starting(Some(Arc::new(w)), Calibration::from_saved(Some(0.01)));
+        apply_event(ProgressEvent::Discovered(1), &mut s);
+        apply_event(ProgressEvent::FileStarted("clip.mp4".into()), &mut s);
+        s
+    }
+
+    fn frames(path: &str, frame: u64, total: Option<u64>) -> ProgressEvent {
+        ProgressEvent::FrameProgress {
+            path: PathBuf::from(path),
+            frame,
+            total,
+        }
+    }
+
+    #[test]
+    fn frames_move_the_bar_part_way_through_a_video() {
+        let mut s = one_video_state();
+        // Nothing has finished, and on a one-video batch nothing will for the
+        // length of the clip. Before the frame events this read 0% throughout.
+        assert_eq!(s.fraction(), Some(0.0));
+
+        apply_event(frames("clip.mp4", 250, Some(1000)), &mut s);
+        assert!((s.fraction().unwrap() - 0.25).abs() < 1e-6);
+        assert_eq!(s.current_frames, Some((250, Some(1000))));
+
+        apply_event(frames("clip.mp4", 750, Some(1000)), &mut s);
+        assert!((s.fraction().unwrap() - 0.75).abs() < 1e-6);
+        // The ETA has to shrink with it, not sit at the opening estimate.
+        assert!(s.eta_secs().unwrap() < 10.0);
+    }
+
+    #[test]
+    fn a_finished_video_is_not_credited_twice_over() {
+        let mut s = one_video_state();
+        apply_event(frames("clip.mp4", 900, Some(1000)), &mut s);
+        apply_event(
+            ProgressEvent::FileDone {
+                path: "clip.mp4".into(),
+                regions: 3,
+            },
+            &mut s,
+        );
+        // 90% from the frames plus 100% from the file would be 1.9 before the
+        // clamp, and would have left the next file in a batch unable to move the
+        // bar at all.
+        assert!((s.fraction().unwrap() - 1.0).abs() < 1e-6);
+        assert!((s.done_work - 1000.0).abs() < 1e-6);
+        assert_eq!(s.current_frames, None);
+        assert_eq!(s.remaining_work(), Some(0.0));
+    }
+
+    #[test]
+    fn frames_calibrate_the_rate_before_any_file_finishes() {
+        let mut s = one_video_state();
+        // Seeded from a saved rate, so "measured" here means measured *on this
+        // run*: a machine ten times faster than last time used to stay wrong
+        // for the whole of a single-video batch, because the only observation
+        // came from a finished file.
+        s.started = Some(Instant::now() - Duration::from_secs(5));
+        apply_event(frames("clip.mp4", 500, Some(1000)), &mut s);
+        // 500 units in 5s = 0.01 s/unit. The arithmetic matters less than that
+        // an observation happened at all.
+        assert!(s.calibration.is_measured());
+        assert!((s.calibration.secs_per_unit() - 0.01).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_clip_of_unknown_length_counts_frames_without_crediting_work() {
+        let mut s = one_video_state();
+        apply_event(frames("clip.mp4", 42, None), &mut s);
+        // The counter is the answer to "is it stuck", and it works with no
+        // denominator. The bar cannot move, because there is no fraction to
+        // move it by and the scan excluded the clip from the total anyway.
+        assert_eq!(s.current_frames, Some((42, None)));
+        assert_eq!(s.fraction(), Some(0.0));
+    }
+
+    #[test]
+    fn frames_for_an_unannounced_file_are_attributed_to_it() {
+        let mut s = one_video_state();
+        apply_event(frames("other.mp4", 10, Some(100)), &mut s);
+        // Whatever the events say wins over our own idea of what is running:
+        // crediting another file's frames to `clip.mp4` would move the bar for
+        // work that was never done on it.
+        assert_eq!(s.current.as_deref(), Some(Path::new("other.mp4")));
+        assert_eq!(s.fraction(), Some(0.0));
     }
 
     #[test]

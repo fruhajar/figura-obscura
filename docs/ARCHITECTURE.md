@@ -82,6 +82,33 @@ skip the file, or blank the frame entirely. `Blank` is the fail-closed choice �
 obliterate rather than risk a leak. This is centralised in one function
 specifically so the three callers cannot drift apart.
 
+### Hand-drawn regions enter the pipeline at the censor stage
+
+The GUI's Edit page is the manual fallback for what no model will find — a
+licence plate, a face in the background, a region a detector missed. It skips
+detect and filter and hands its boxes straight to `ob_censor::apply`, one call
+per box so each can carry its own style. That is the whole integration: a
+hand-drawn region is censored by the same code as a detected one, so what the
+canvas shows is what the pixels will be.
+
+Two differences from the batch, both deliberate. Padding is zero, because the
+box *is* what the user drew and quietly growing it by the batch's 10% would make
+the drawn outline a lie. And the category is a placeholder that nothing reads:
+per-part overrides are empty for a manual box, since the taxonomy describes what
+a detector saw and nobody classified this. Corner rounding, which the batch
+holds once for the whole profile, is per box here — it is part of a box's
+appearance, and a control that reshaped every box already drawn would be the
+only one on the page that did not act on the selection.
+
+The document and its undo history (`ob-gui/src/edit.rs`) are GUI-only and
+deliberately pure — no context, no I/O — so the rules that are easy to get
+subtly wrong are testable on a machine with no display server: what counts as
+one undo step, where a corner handle sits, what a drag that leaves the frame
+means. Undo is whole-document snapshots rather than inverse commands: the
+document is a few rectangles, so every edit is undoable by construction instead
+of by remembering to write a matching inverse for each one. A continuous gesture
+coalesces into one step by key, so a drag undoes in one press rather than sixty.
+
 ## Detection
 
 ### Letterboxing
@@ -222,6 +249,25 @@ because there is only one implementation. And the scan produces *relative*
 weights; the absolute seconds-per-unit is calibrated from real runs and
 persisted, so an error in the constants stretches every item equally and cancels
 out of the ratio.
+
+A video frame's two halves are costed differently, because they behave
+differently. Inference is a step function of the frame's size, so it comes from
+the tile planner (nine passes at 1080p, thirteen at 4K, with the default 320px
+input). Decode, composite and encode are close to linear in pixels, so they are
+costed by **area**, as a per-1080p-frame constant scaled by the frame's own area.
+Inference dominates at the default `detect_every` of 3, where the codec term is a
+couple of percent of a 4K clip; by one detection in thirty it is a third, and costing the skipped frames as free made a long clip at a low detect
+rate look an order of magnitude cheaper than it was.
+
+Progress is credited **mid-file**, not only when a file lands.
+`ProgressEvent::FrameProgress` reports the encoder's position at most ten times a
+second, and the GUI credits the file's measured work in proportion to the frames
+it has finished. That is what makes a batch of one video legible: counting
+finished files, such a run reported zero work from start to end, so the bar sat
+at 0%, the ETA never moved off the scan's opening guess, and the calibration
+received no observation to learn from until the run was over. The share is
+derived from the scan's own total for the file rather than from a second
+per-frame cost, so the bar cannot advance at a rate the ETA disagrees with.
 
 ## Invariants worth not breaking
 

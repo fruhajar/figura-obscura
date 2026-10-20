@@ -99,6 +99,7 @@ pub mod glyph {
     pub const NAV_TUNING: &str = "⚙";
     pub const NAV_MODELS: &str = "▣";
     pub const NAV_ABOUT: &str = "ℹ";
+    pub const NAV_EDIT: &str = "✏";
 
     /// Queue rows, by media kind.
     pub const FOLDER: &str = "📂";
@@ -117,6 +118,8 @@ pub mod glyph {
     pub const REMOVE: &str = "✖";
     /// The file currently being processed.
     pub const RUNNING: &str = "▶";
+    /// Between a width and a height.
+    pub const TIMES: &str = "×";
 
     /// Everything above, for `glyphs_are_all_covered_by_the_bundled_fonts`.
     /// Test-only, so it does not sit in the shipped binary as dead data.
@@ -126,6 +129,7 @@ pub mod glyph {
         NAV_TUNING,
         NAV_MODELS,
         NAV_ABOUT,
+        NAV_EDIT,
         FOLDER,
         IMAGE,
         VIDEO,
@@ -137,6 +141,7 @@ pub mod glyph {
         DOT,
         REMOVE,
         RUNNING,
+        TIMES,
     ];
 }
 

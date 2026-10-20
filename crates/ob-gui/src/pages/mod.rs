@@ -1,6 +1,7 @@
 //! One module per page in the window, plus the first-run setup screen.
 
 pub mod about;
+pub mod editor;
 pub mod models;
 pub mod preview;
 pub mod queue;

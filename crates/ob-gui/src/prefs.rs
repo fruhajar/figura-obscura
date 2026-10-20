@@ -20,17 +20,19 @@ pub enum Tab {
     #[default]
     Queue,
     Tuning,
+    Edit,
     Models,
     About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Queue, Tab::Tuning, Tab::Models, Tab::About];
+    pub const ALL: [Tab; 5] = [Tab::Queue, Tab::Tuning, Tab::Edit, Tab::Models, Tab::About];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Queue => "Batch",
             Tab::Tuning => "Tuning",
+            Tab::Edit => "Edit",
             Tab::Models => "Models",
             Tab::About => "About",
         }
@@ -44,6 +46,7 @@ impl Tab {
         match self {
             Tab::Queue => glyph::NAV_BATCH,
             Tab::Tuning => glyph::NAV_TUNING,
+            Tab::Edit => glyph::NAV_EDIT,
             Tab::Models => glyph::NAV_MODELS,
             Tab::About => glyph::NAV_ABOUT,
         }

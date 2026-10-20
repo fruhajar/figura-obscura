@@ -29,6 +29,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// videos stays a matter of seconds. `--dry-run-frames` overrides it.
 pub const DEFAULT_DRY_RUN_FRAMES: usize = 12;
 
+/// Shortest gap between two [`ProgressEvent::FrameProgress`] events for one file.
+///
+/// Ten a second is already far more than a reader can take in, and it bounds
+/// the event volume by wall-clock time rather than by resolution: the same clip
+/// at 4K and at 360p costs the same number of events, where one-per-frame would
+/// flood the channel on exactly the small inputs that need the fewest updates.
+/// The frame *counter* still advances by whatever happened in between, so no
+/// progress is lost, only redundant notifications.
+pub const FRAME_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Everything a run needs besides the detector (which the caller builds from the
 /// chosen model + `ob-models` cache path).
 pub struct JobConfig<'a> {
@@ -55,6 +65,28 @@ pub struct JobConfig<'a> {
 pub enum ProgressEvent {
     Discovered(usize),
     FileStarted(PathBuf),
+    /// A video is partway through: `frame` of `total` frames are finished.
+    ///
+    /// Without this a video emits `FileStarted` and then nothing until it is
+    /// done, so a single long clip is indistinguishable from a hang for as long
+    /// as it takes, which on a 4K feature is tens of minutes. It also carries
+    /// the only mid-file signal the ETA has: a one-video run used to credit no
+    /// work at all until the end, so the bar sat at zero and the calibration
+    /// never got an observation to learn from.
+    ///
+    /// Emitted at most every [`FRAME_PROGRESS_INTERVAL`], not once per frame: a
+    /// short clip at 1080p finishes frames faster than any display can show
+    /// them, and the receivers are a channel feeding a 60 Hz window and a
+    /// terminal progress bar.
+    FrameProgress {
+        path: PathBuf,
+        /// Frames finished so far, 1-based.
+        frame: u64,
+        /// What the probe said the clip holds, or `None` when it declared no
+        /// length. Deliberately not invented: a made-up denominator produces a
+        /// counter that sails past 100%.
+        total: Option<u64>,
+    },
     FileDone {
         path: PathBuf,
         regions: usize,
@@ -171,7 +203,7 @@ fn run_one(
 
     let result = match item.kind {
         MediaKind::Image => process_image(&item.path, &out, cfg, detector),
-        MediaKind::Video => process_video(&item.path, &out, cfg, detector),
+        MediaKind::Video => process_video(&item.path, &out, cfg, detector, progress),
         MediaKind::Unknown => Ok(0),
     };
 
@@ -257,6 +289,62 @@ fn process_image(
     Ok(regions)
 }
 
+/// Counts frames for one file and reports them, rate-limited.
+///
+/// A struct rather than a closure because the rate limit needs state, and
+/// because both the real pipeline and the dry-run sampler report the same way:
+/// a dry run over a folder of long clips is slow for the same reason a real one
+/// is, and used to be just as silent.
+struct FrameTicker<'a> {
+    path: &'a Path,
+    total: Option<u64>,
+    frame: u64,
+    /// `None` until the first report, so the first finished frame is announced
+    /// at once. On a tiled 4K clip one frame is seconds of work, and waiting out
+    /// an interval before saying anything is the silence this exists to end.
+    last: Option<std::time::Instant>,
+    progress: &'a (dyn Fn(ProgressEvent) + Sync),
+}
+
+impl<'a> FrameTicker<'a> {
+    fn new(
+        path: &'a Path,
+        total: Option<u64>,
+        progress: &'a (dyn Fn(ProgressEvent) + Sync),
+    ) -> Self {
+        Self {
+            path,
+            total,
+            frame: 0,
+            last: None,
+            progress,
+        }
+    }
+
+    /// Count one finished frame, reporting it if the interval has elapsed.
+    fn tick(&mut self) {
+        self.frame += 1;
+        let now = std::time::Instant::now();
+        // The declared last frame is always reported, whatever the interval. It
+        // is the one the user is left looking at, and a counter that stops at
+        // "frame 99 / 100" reads as a run that did not quite finish.
+        let last_frame = self.total == Some(self.frame);
+        if !last_frame
+            && self
+                .last
+                .is_some_and(|t| now.duration_since(t) < FRAME_PROGRESS_INTERVAL)
+        {
+            return;
+        }
+        self.last = Some(now);
+        (self.progress)(ProgressEvent::FrameProgress {
+            path: self.path.to_path_buf(),
+            frame: self.frame,
+            total: self.total,
+        });
+    }
+}
+
 /// A dry run over a video: detect on a sample of frames, write nothing.
 ///
 /// This used to open the file, confirm it was readable and return 0. That was
@@ -269,8 +357,17 @@ fn process_image(
 /// it exists to let the tracker coast between neighbouring frames, and these
 /// samples are seconds apart. For the same reason no tracker is used — there is
 /// no continuity between the samples to smooth.
-fn sample_video(input: &Path, cfg: &JobConfig, detector: &dyn Detector) -> Result<usize, JobError> {
+fn sample_video(
+    input: &Path,
+    cfg: &JobConfig,
+    detector: &dyn Detector,
+    progress: &(dyn Fn(ProgressEvent) + Sync),
+) -> Result<usize, JobError> {
     let mut source = FfmpegSampler::open(input, cfg.dry_run_frames)?;
+    // The sampler's plan, not the clip's length: a dry run does `planned`
+    // frames of work and nothing more, so that is the denominator the counter
+    // is measured against.
+    let mut ticker = FrameTicker::new(input, Some(source.planned() as u64), progress);
     let mut total = 0usize;
     while let Some(mut frame) = source.next_frame()? {
         // Sampling a long clip is not instant, so honour cancellation here too.
@@ -280,6 +377,7 @@ fn sample_video(input: &Path, cfg: &JobConfig, detector: &dyn Detector) -> Resul
         // The same call the batch and the preview make, so a dry run answers
         // `on_detect_failure` exactly the way the real run will.
         total += censor_frame(&mut frame, detector, cfg.profile)?;
+        ticker.tick();
     }
     Ok(total)
 }
@@ -289,9 +387,10 @@ fn process_video(
     output: &Path,
     cfg: &JobConfig,
     detector: &dyn Detector,
+    progress: &(dyn Fn(ProgressEvent) + Sync),
 ) -> Result<usize, JobError> {
     if cfg.dry_run {
-        return sample_video(input, cfg, detector);
+        return sample_video(input, cfg, detector, progress);
     }
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -306,7 +405,7 @@ fn process_video(
         cfg.video_opts.clone(),
     )?);
 
-    let result = run_video_pipeline(source, &mut sink, &info, cfg, detector);
+    let result = run_video_pipeline(input, source, &mut sink, &info, cfg, detector, progress);
 
     match result {
         Ok(total) => {
@@ -374,11 +473,13 @@ fn pipeline_depth(width: u32, height: u32) -> usize {
 /// Output is unchanged by this. The tracker sees the same frames in the same
 /// order with the same detections, and the encoder receives the same bytes.
 fn run_video_pipeline(
+    input: &Path,
     mut source: FfmpegSource,
     sink: &mut FfmpegSink,
     info: &ob_media::video::VideoInfo,
     cfg: &JobConfig,
     detector: &dyn Detector,
+    progress: &(dyn Fn(ProgressEvent) + Sync),
 ) -> Result<usize, JobError> {
     use std::sync::mpsc::sync_channel;
 
@@ -451,6 +552,11 @@ fn run_video_pipeline(
         // both depend on frames arriving in decode order.
         let mut tracker = Tracker::new(cfg.track);
         let mut total = 0usize;
+        // Counted here, at the end of the pipeline, rather than at the decoder:
+        // a frame is only done when it is in the encoder, and counting three
+        // stages earlier would run the counter ahead of the work and report a
+        // clip as finished while the encoder was still draining.
+        let mut ticker = FrameTicker::new(input, info.frame_count, progress);
         for item in det_rx {
             // Stopping between frames is what makes cancellation safe: the
             // caller discards the partial file, so a cancelled encode never
@@ -467,6 +573,7 @@ fn run_video_pipeline(
             apply_censor(&mut frame, &selected, &cfg.profile.censor)?;
             total += selected.len();
             sink.put_frame(&frame)?;
+            ticker.tick();
         }
         Ok(total)
     })
@@ -1229,6 +1336,123 @@ mod tests {
         if let (Some(b), Some(a)) = (before, after) {
             assert_eq!(a, b, "frame count changed passing through the pipeline");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_video_reports_its_frames_as_it_goes() {
+        // The point of the event: before it, a video emitted FileStarted and
+        // then nothing at all until it finished, so a long clip was
+        // indistinguishable from a hang. At minimum the first frame has to be
+        // announced while the file is still running.
+        let Some(clip) = a_test_clip("frame-progress") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let declared = ob_media::video::probe(&clip).unwrap().frame_count;
+
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let cfg = job_cfg(&profile, &clip, &out);
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+
+        let seen: std::sync::Mutex<Vec<ProgressEvent>> = std::sync::Mutex::new(Vec::new());
+        run(&cfg, &d, &|ev| {
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push(ev)
+        })
+        .unwrap();
+        let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());
+
+        let frames: Vec<(u64, Option<u64>)> = seen
+            .iter()
+            .filter_map(|ev| match ev {
+                ProgressEvent::FrameProgress {
+                    path, frame, total, ..
+                } => {
+                    assert_eq!(path, &clip, "frame reported against the wrong file");
+                    Some((*frame, *total))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(!frames.is_empty(), "a video ran and reported no frames");
+        // This clip finishes well inside one FRAME_PROGRESS_INTERVAL, so the
+        // first frame and the last are the expected events, not a shortfall.
+        // What must hold is that the counter only ever goes forward and never
+        // past the length the probe declared.
+        if let Some(declared) = declared {
+            assert_eq!(
+                frames.last().map(|(f, _)| *f),
+                Some(declared),
+                "the last frame of the clip went unreported: {frames:?}"
+            );
+        }
+        assert!(
+            frames.windows(2).all(|w| w[1].0 > w[0].0),
+            "frame counter did not advance monotonically: {frames:?}"
+        );
+        for (frame, total) in &frames {
+            assert_eq!(*total, declared, "counter reported a length of its own");
+            if let Some(t) = total {
+                assert!(*frame <= *t, "counter ran past the end: {frame} of {t}");
+            }
+        }
+        // Ordering is what the GUI relies on to attribute frames to a file.
+        let started = seen
+            .iter()
+            .position(|ev| matches!(ev, ProgressEvent::FileStarted(_)));
+        let first_frame = seen
+            .iter()
+            .position(|ev| matches!(ev, ProgressEvent::FrameProgress { .. }));
+        let done = seen
+            .iter()
+            .position(|ev| matches!(ev, ProgressEvent::FileDone { .. }));
+        assert!(
+            started < first_frame && first_frame < done,
+            "frames must arrive between the file starting and finishing"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dry_run_reports_frames_against_the_sample_it_takes() {
+        // A dry run's denominator is the sample size, not the clip's length:
+        // the work it does is `dry_run_frames` detections, and measuring the
+        // counter against a two-hour film would park it near zero all run.
+        let Some(clip) = a_test_clip("frame-progress-dry") else {
+            eprintln!("skipped: ffmpeg unavailable");
+            return;
+        };
+        let dir = clip.parent().unwrap().to_path_buf();
+        let out = dir.join("out");
+        let profile = Profile::default();
+        let mut cfg = job_cfg(&profile, &clip, &out);
+        cfg.dry_run = true;
+        cfg.dry_run_frames = 4;
+        let d = FakeDetector {
+            dets: vec![genitalia_det()],
+            fail: false,
+        };
+
+        let totals: std::sync::Mutex<Vec<Option<u64>>> = std::sync::Mutex::new(Vec::new());
+        run(&cfg, &d, &|ev| {
+            if let ProgressEvent::FrameProgress { total, .. } = ev {
+                totals.lock().unwrap_or_else(|e| e.into_inner()).push(total);
+            }
+        })
+        .unwrap();
+        let totals = totals.into_inner().unwrap_or_else(|e| e.into_inner());
+
+        assert!(!totals.is_empty(), "a dry run reported no frames");
+        assert!(
+            totals.iter().all(|t| *t == Some(4)),
+            "dry run counted against the clip, not the sample: {totals:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
