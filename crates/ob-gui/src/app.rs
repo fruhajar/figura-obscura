@@ -1224,7 +1224,15 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&path).unwrap();
         std::env::set_var("OBSCURA_CONFIG_DIR", &path);
         std::env::set_var("OBSCURA_MODEL_DIR", path.join("models"));
-        let app = ObApp::default();
+        let mut app = ObApp::default();
+        // `ObApp::default` asks the machine whether ffmpeg is installed, and on
+        // one that has none the tool banner claims a block of height above every
+        // page. That moved the Edit canvas out from under the fixed coordinates
+        // its drag tests press at, so six of them passed on a dev box and failed
+        // on a CI runner, where ffmpeg is never installed. The layout a test
+        // sees has to be the layout the test asked for; the two cases that want
+        // the banner set `missing_tools` themselves.
+        app.missing_tools.clear();
         (app, TestDir { _lock: lock, path })
     }
 
