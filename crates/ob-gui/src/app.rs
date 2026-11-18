@@ -2,7 +2,7 @@
 //! loop that drives the pages.
 //!
 //! The window is a left nav rail, a page, and a persistent status bar carrying
-//! the primary action. Everything slow — inference, downloads, video encoding —
+//! the primary action. Everything slow (inference, downloads, video encoding)
 //! happens on worker threads (`run`, `downloads`); `update` only drains their
 //! channels and draws.
 
@@ -33,8 +33,8 @@ const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
 /// A fingerprint of everything a preview depends on, split by what it costs to
 /// react to.
 ///
-/// `detect` covers the source file, the model and its settings — changing any
-/// of those means running inference again. `compose` covers the filter, the
+/// `detect` covers the source file, the model and its settings, so changing
+/// any of those means running inference again. `compose` covers the filter, the
 /// censor styles and the fail-closed policy, which only re-paint an already
 /// detected frame. Keeping them apart is what makes tuning a censor style feel
 /// instant while changing the confidence threshold honestly costs a re-detect.
@@ -76,7 +76,7 @@ fn inputs_key(inputs: &[PathBuf]) -> u64 {
 pub enum PreviewNext {
     /// Up to date, or waiting on something else.
     Idle,
-    /// The settings are still moving — come back after this long.
+    /// The settings are still moving, so come back after this long.
     Wait(Duration),
     /// Start a job for these keys.
     Start(PreviewKeys),
@@ -85,7 +85,7 @@ pub enum PreviewNext {
 /// The debounce behind the live preview.
 ///
 /// Kept as pure state with the clock passed in, so the timing rules can be
-/// tested without a model, a display server, or a worker thread — none of which
+/// tested without a model, a display server, or a worker thread, none of which
 /// the build container has.
 #[derive(Default)]
 pub struct PreviewSchedule {
@@ -142,7 +142,7 @@ impl PreviewSchedule {
     }
 
     /// Forget what has been rendered, so the next poll re-renders. Used when
-    /// something outside the fingerprint changed — a model was installed, or
+    /// something outside the fingerprint changed: a model was installed, or
     /// the user asked for a fresh look at a file that may have changed on disk.
     pub fn invalidate(&mut self) {
         self.done = None;
@@ -185,7 +185,7 @@ pub struct PreviewView {
 ///
 /// Every field here used to be recomputed inside the row loop: two `stat`
 /// calls, a GIF header decode and two `String` allocations per row, sixty times
-/// a second. That is a model question — "what is this file?" — answered in the
+/// a second. That is a model question ("what is this file?") answered in the
 /// view, so the cost scaled with the length of the batch rather than with what
 /// the batch was doing. Answered once per change to the list, it costs nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -279,7 +279,7 @@ pub struct ObApp {
     pub prefs: Prefs,
     /// Effective settings for the selected model (defaults layered with edits).
     pub settings: SettingValues,
-    /// The registry, resolved once — it allocates a `Vec<Setting>` per entry,
+    /// The registry, resolved once. It allocates a `Vec<Setting>` per entry,
     /// which is not something to redo sixty times a second.
     pub registry: Vec<ModelEntry>,
 
@@ -317,7 +317,7 @@ pub struct ObApp {
     pub probed_key: Option<u64>,
 
     /// The manual editor's page state: the open image, its hand-drawn boxes and
-    /// their undo history. Deliberately not persisted — a document is one
+    /// their undo history. Deliberately not persisted: a document is one
     /// image's worth of work, finished when it is saved.
     pub editor: crate::edit::EditorState,
 
@@ -459,7 +459,7 @@ impl ObApp {
     /// `self.registry`. The Models page moves its copy out of the app for the
     /// duration of its card loop, so that each card can take `&mut app`; a
     /// lookup against `self.registry` would find nothing there and this would
-    /// silently do nothing — which is exactly what "Use this model" did before.
+    /// silently do nothing, which is exactly what "Use this model" did before.
     pub fn select_model(&mut self, id: &str) {
         if self.prefs.profile.model_id == id {
             return;
@@ -475,7 +475,7 @@ impl ObApp {
         // would silently come back if the primary were switched away again.
         self.prefs.extra_models.retain(|x| x != id);
         // The old preview's detections came from a different model. The image
-        // stays on screen — the auto pass replaces it in a moment, and a panel
+        // stays on screen: the auto pass replaces it in a moment, and a panel
         // that blanks on every model switch is harder to compare against.
         self.preview_cache = None;
         self.preview_schedule.invalidate();
@@ -503,7 +503,7 @@ impl ObApp {
         }
         if !self.model_ready() {
             return Some(format!(
-                "The model `{}` is not installed — get it on the Models page.",
+                "The model `{}` is not installed. Get it on the Models page.",
                 self.prefs.profile.model_id
             ));
         }
@@ -565,7 +565,7 @@ impl ObApp {
     /// The file the preview renders: an explicit pick, else the first input
     /// that is actually a file.
     ///
-    /// Directories are skipped rather than previewed-and-failed — a batch is
+    /// Directories are skipped rather than previewed-and-failed. A batch is
     /// very often a single folder, and "that is a directory" is a useless thing
     /// to tell someone who asked to see a preview.
     pub fn preview_path(&self) -> Option<PathBuf> {
@@ -662,7 +662,7 @@ impl ObApp {
     /// Correct the row glyphs from the scan that has just landed.
     ///
     /// The only case that moves is `.gif`, which is two formats wearing one
-    /// extension — the scan opened the file and knows which. Doing it here
+    /// extension, and the scan opened the file and knows which. Doing it here
     /// rather than in [`InputRow::probe`] keeps the decode off the UI thread.
     fn refine_rows(&mut self) {
         let Some(probed) = self.probed.as_ref() else {
@@ -695,7 +695,7 @@ impl ObApp {
     /// Explicitly asked for: always re-runs inference.
     ///
     /// The automatic path reuses cached detections wherever it can, but a
-    /// deliberate press means "look again" — the file on disk may have changed
+    /// deliberate press means "look again": the file on disk may have changed
     /// under us, and that is the only way to find out.
     pub fn start_preview(&mut self) {
         let Some(input) = self.preview_path() else {
@@ -785,7 +785,7 @@ impl ObApp {
     /// Called before anything draws, and cheap when nothing changed: installing
     /// a style clones and replaces the whole thing, which is not something to do
     /// sixty times a second for an answer that only moves when the user clicks a
-    /// swatch — or when the desktop flips to night mode under a running window,
+    /// swatch, or when the desktop flips to night mode under a running window,
     /// which is why the system preference is re-read each frame rather than at
     /// startup.
     pub fn apply_scheme(&mut self, ctx: &egui::Context) {
@@ -835,13 +835,13 @@ impl ObApp {
                 }
                 Some(f) if f.failed > 0 => {
                     self.toast(
-                        format!("Finished with {} error(s) — see the log.", f.failed),
+                        format!("Finished with {} error(s). See the log.", f.failed),
                         ToastKind::Error,
                     );
                 }
                 Some(f) => {
                     self.toast(
-                        format!("Done — {} file(s) written to {}", f.ok, output.display()),
+                        format!("Done. {} file(s) written to {}", f.ok, output.display()),
                         ToastKind::Success,
                     );
                 }
@@ -863,7 +863,7 @@ impl ObApp {
             // rather than offered as a partial review.
             Some(_) if cancelled => {
                 self.review = None;
-                self.toast("Stopped — nothing was written.", ToastKind::Info);
+                self.toast("Stopped. Nothing was written.", ToastKind::Info);
             }
             Some(review) => {
                 let regions = review.region_count();
@@ -877,7 +877,7 @@ impl ObApp {
                 } else {
                     self.toast(
                         format!(
-                            "Found {regions} region(s). {clean} file(s) had none —                              check those before writing."
+                            "Found {regions} region(s). {clean} file(s) had none, so check those before writing."
                         ),
                         ToastKind::Info,
                     );
@@ -1097,7 +1097,7 @@ impl ObApp {
                 {
                     self.review = None;
                     self.editor = crate::edit::EditorState::default();
-                    self.toast("Review discarded — nothing written.", ToastKind::Info);
+                    self.toast("Review discarded. Nothing written.", ToastKind::Info);
                 }
             } else {
                 let blocker = self.run_blocker();
@@ -1645,7 +1645,7 @@ pub(crate) mod tests {
     fn select_model_works_while_the_registry_is_borrowed_out() {
         // The Models page moves `registry` out of the app for the duration of
         // its loop (so each card can take `&mut app`). A `select_model` that
-        // looked the id up in `self.registry` would silently do nothing there —
+        // looked the id up in `self.registry` would silently do nothing there:
         // clicking "Use this model" would appear to be ignored.
         let (mut app, _dir) = test_app("taken-registry");
         let taken = std::mem::take(&mut app.registry);
@@ -1706,8 +1706,8 @@ pub(crate) mod tests {
         assert!(matches!(sched.poll(k, false, t0), PreviewNext::Wait(_)));
         assert_eq!(sched.poll(k, false, fire), PreviewNext::Start(k));
         sched.started(Some(k));
-        // While it runs, and after it lands, the same settings are left alone —
-        // otherwise the preview would loop on itself forever.
+        // While it runs, and after it lands, the same settings are left alone,
+        // because otherwise the preview would loop on itself forever.
         assert_eq!(sched.poll(k, true, fire), PreviewNext::Idle);
         assert_eq!(sched.finished(), Some(k));
         assert_eq!(sched.poll(k, false, fire), PreviewNext::Idle);
@@ -1748,7 +1748,8 @@ pub(crate) mod tests {
         // Debounced, then held back only because a job is in flight.
         assert!(matches!(sched.poll(k2, true, t0), PreviewNext::Wait(_)));
         assert_eq!(sched.poll(k2, true, t1), PreviewNext::Idle);
-        // The moment it lands, the newer state is picked up — no extra input
+        // The moment it lands, the newer state is picked up, with no extra
+        // input
         // from the user needed to un-stick it.
         sched.finished();
         assert_eq!(sched.poll(k2, false, t1), PreviewNext::Start(k2));
@@ -1801,7 +1802,7 @@ pub(crate) mod tests {
         let after = app.preview_keys().expect("keys");
 
         // Adding a model changes which regions exist at all, so it belongs to
-        // the expensive half — re-painting the cached detections would show a
+        // the expensive half: re-painting the cached detections would show a
         // preview the batch would not reproduce.
         assert_ne!(before.detect, after.detect);
         assert_eq!(before.compose, after.compose);
@@ -1895,7 +1896,7 @@ pub(crate) mod tests {
         assert_eq!(one.images, 1);
         assert!(one.total_work > 0.0);
 
-        // A second, much smaller file must change the total — and must trigger
+        // A second, much smaller file must change the total, and must trigger
         // a fresh scan, since a measurement of the previous batch would be
         // worse than none at all.
         app.inputs.push(write_png(&dir, "b.png", 64, 64));
@@ -2052,7 +2053,7 @@ mod screenshots {
     /// A synthetic photo: a diagonal gradient with a finely striped patch where
     /// the "detection" is.
     ///
-    /// The stripes matter — pixelating a flat colour is a no-op, so a blank
+    /// The stripes matter: pixelating a flat colour is a no-op, so a blank
     /// patch would make every censor style look like it did nothing, which is
     /// the opposite of what the screenshot is for.
     fn sample_frame(w: u32, h: u32) -> ob_core::geometry::Frame {
@@ -2081,7 +2082,7 @@ mod screenshots {
     ///
     /// Built through `ob_job::preview_compose` rather than by painting a
     /// rectangle, so the screenshot shows the censor styles as they will
-    /// actually appear — the point of looking at it at all.
+    /// actually appear, which is the point of looking at it at all.
     fn install_preview(app: &mut super::ObApp, ctx: &egui::Context) {
         let (w, h) = (520u32, 340u32);
         let src = ob_job::PreviewSource {
@@ -2118,7 +2119,7 @@ mod screenshots {
         let painted = canvas.painted_fraction(clear);
         assert!(
             painted > min_painted,
-            "{name}: only {:.1}% of the window was painted — the UI did not render",
+            "{name}: only {:.1}% of the window was painted, so the UI did not render",
             painted * 100.0
         );
 

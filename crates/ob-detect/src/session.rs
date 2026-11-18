@@ -1,8 +1,8 @@
 //! ONNX Runtime session wiring, isolated so the `ort` API surface Obscura depends on
-//! stays small (ort 2.0 is rc — API not yet frozen; see plan Risks).
+//! stays small (ort 2.0 is an rc, so its API is not yet frozen).
 //!
-//! The full detect flow — letterbox → run → decode YOLO output → NMS → invert
-//! coordinates → map labels — is assembled here. The only calls into `ort` are
+//! The full detect flow is assembled here: letterbox, run, decode the YOLO
+//! output, NMS, invert the coordinates, map the labels. The only calls into `ort` are
 //! [`build_session`] and [`OnnxDetector::run`]; everything else is pure and unit
 //! tested without a real model.
 
@@ -27,7 +27,7 @@ pub struct OnnxDetector {
     label_map: LabelMap,
     conf_threshold: f32,
     nms_iou: f32,
-    /// The provider the session actually loaded on — see
+    /// The provider the session actually loaded on. See
     /// [`Detector::execution_provider`]. Previously this held the *requested*
     /// list and was never read, which is why nothing noticed that a GPU build
     /// was running on CPU.
@@ -38,7 +38,7 @@ pub struct OnnxDetector {
     /// The name of the model's single image input tensor (e.g. `"images"`).
     input_name: String,
     /// Kernel used to scale frames into model input space. See
-    /// [`Resampler`] — the default is deliberately not nearest-neighbour.
+    /// [`Resampler`]. The default is deliberately not nearest-neighbour.
     resampler: Resampler,
     /// Most windows this detector will feed through the graph in one run.
     ///
@@ -55,8 +55,8 @@ pub struct OnnxDetector {
 ///
 /// **One**, which is to say: off. This is a measured result and it went against
 /// expectation. Feeding a tile grid to the graph as a batch is the obvious
-/// optimisation — one run instead of thirteen, each paying the per-run overhead
-/// once — and on the ONNX Runtime CPU provider it is consistently *slower*,
+/// optimisation: one run instead of thirteen, each paying the per-run overhead
+/// once. On the ONNX Runtime CPU provider it is consistently *slower*,
 /// monotonically worse as the batch grows, at every session and thread count
 /// tried. The CPU kernels already spread one inference across the intra-op
 /// threads, and a batched tensor buys no extra parallelism while costing cache
@@ -65,8 +65,8 @@ pub struct OnnxDetector {
 ///
 /// The machinery is kept because the reasoning that motivated it still holds
 /// for a GPU, where per-launch overhead dominates and wide batches are the
-/// normal way to feed one. That is unverified here — this environment has no
-/// GPU — so it is not a default anybody gets by accident. A GPU user can try it
+/// normal way to feed one. That is unverified here, because this environment
+/// has no GPU, so it is not a default anybody gets by accident. A GPU user can try it
 /// with `OBSCURA_MAX_BATCH=8` and measure.
 const MAX_BATCH: usize = 1;
 
@@ -78,7 +78,7 @@ const BATCH_CEILING: usize = 16;
 ///
 /// `Session::run` takes `&mut self`, and the batch engine shares one `Detector`
 /// across rayon workers via `&dyn Detector`, so a session has to be guarded.
-/// A single `Mutex<Session>` was the obvious guard — and the reason
+/// A single `Mutex<Session>` was the obvious guard, and the reason
 /// `images.par_iter()` never actually ran inference in parallel: every worker
 /// queued on the same lock, so a twelve-core machine did image decode and
 /// censoring twelve ways and inference one way. ONNX Runtime does serialise
@@ -157,7 +157,8 @@ impl Drop for Lease<'_> {
 /// to the machine by default, so simply holding four sessions on a twelve-core
 /// box asks for forty-eight compute threads plus the batch engine's own
 /// workers. Measured, that was slower than the single serialised session it
-/// replaced — the image cases regressed by a third — because the cores spent
+/// replaced, with the image cases regressing by a third, because the cores
+/// spent
 /// their time changing their minds about what to run.
 ///
 /// So the budget is divided rather than multiplied: `sessions × intra_threads`
@@ -188,7 +189,7 @@ fn thread_plan(provider: ExecProvider) -> ThreadPlan {
     // measurably slower than doing nothing at all.
     let cores = num_cpus::get_physical().max(1);
     // Overridable because "how much of this machine may it have" is a question
-    // about the machine, not about the model — someone sharing a build box or
+    // about the machine, not about the model. Someone sharing a build box or
     // pinning a container needs to answer it themselves.
     let sessions = env_usize("OBSCURA_SESSIONS")
         .unwrap_or(DEFAULT_CPU_SESSIONS)
@@ -196,8 +197,8 @@ fn thread_plan(provider: ExecProvider) -> ThreadPlan {
     // Deliberately less than the whole machine. Inference is not all a run
     // does: every image is also decoded and re-encoded, and those happen on the
     // batch engine's own workers at the same time. Budgeting every core to the
-    // model starved that half of the pipeline — the untiled case, which is
-    // mostly decode, got *slower* — so about a third of the cores are left for
+    // model starved that half of the pipeline, and the untiled case, which is
+    // mostly decode, got *slower*. So about a third of the cores are left for
     // it. Measured on a six-core machine; the overrides exist because the right
     // split depends on the machine and on what else is running.
     let intra = env_usize("OBSCURA_INTRA_THREADS").unwrap_or((cores / 3).max(1));
@@ -217,7 +218,7 @@ fn env_usize(key: &str) -> Option<usize> {
 
 /// Concurrent CPU sessions by default.
 ///
-/// Two, by measurement rather than by argument — see `docs/PERFORMANCE.md`. A
+/// Two, by measurement rather than by argument. See `docs/PERFORMANCE.md`. A
 /// detection model this small parallelises poorly across many intra-op threads,
 /// so a second narrow session beats one wide one; a third and fourth did not
 /// help and eventually hurt, because a worker waiting for a session is a worker
@@ -230,7 +231,7 @@ const DEFAULT_CPU_SESSIONS: usize = 2;
 /// Only providers whose Cargo feature is enabled are compiled in; CPU is always
 /// available and always last. Kept in the same order as
 /// [`crate::preferred_execution_providers`], which names these for reporting.
-// See `preferred_execution_providers` — `#[cfg]`-gated elements, so this cannot
+// See `preferred_execution_providers`: `#[cfg]`-gated elements, so this cannot
 // be a `vec![]` literal however it looks on a CPU-only build.
 #[allow(clippy::vec_init_then_push)]
 fn execution_provider_dispatches() -> Vec<(ExecProvider, ExecutionProviderDispatch)> {
@@ -273,7 +274,7 @@ fn execution_provider_dispatches() -> Vec<(ExecProvider, ExecutionProviderDispat
 /// The two flags answer two different questions that look alike until they
 /// disagree, which is exactly when a GPU run turns out to be a CPU run:
 /// `compiled_in` is about the build, `available` is about the ONNX Runtime it
-/// links. The `rocm` feature makes them disagree by construction — there is no
+/// links. The `rocm` feature makes them disagree by construction: there is no
 /// ROCm prebuilt for linux-x86_64, so `--features rocm` builds happily against
 /// the CPU runtime and produces a "GPU" binary that cannot ever use a GPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +289,8 @@ pub struct EpStatus {
 /// Report every execution provider this build asks for, and whether the linked
 /// ONNX Runtime can actually supply it.
 ///
-/// Cheap and model-free — it only asks ORT what it was built with — so both
+/// Cheap and model-free, since it only asks ORT what it was built with, so
+/// both
 /// binaries can answer "is this a GPU build?" from `--version`, without a model
 /// file or a run.
 pub fn probe_execution_providers() -> Vec<EpStatus> {
@@ -297,7 +299,7 @@ pub fn probe_execution_providers() -> Vec<EpStatus> {
 
     // `is_available` asks the linked runtime for its provider list and looks
     // for this provider's own name in it, so it has to be called on the
-    // concrete type — which only exists when the feature compiled it in. The
+    // concrete type, which only exists when the feature compiled it in. The
     // arms therefore mirror `execution_provider_dispatches` rather than mapping
     // over `preferred_execution_providers`.
     #[allow(unused_mut)]
@@ -349,7 +351,7 @@ pub fn probe_execution_providers() -> Vec<EpStatus> {
 
 /// One line per execution provider, for `--version` and bug reports.
 ///
-/// Reads as `CUDAExecutionProvider (compiled in, runtime missing)` — the case
+/// Reads as `CUDAExecutionProvider (compiled in, runtime missing)`, the case
 /// that explains a GPU build pegged at a few percent GPU load.
 pub fn execution_provider_report() -> Vec<String> {
     probe_execution_providers()
@@ -373,7 +375,7 @@ pub fn execution_provider_report() -> Vec<String> {
 /// `with_execution_providers` call this replaces returned `Ok` whether or not
 /// any GPU provider registered, so a driverless CUDA build reported success and
 /// then ran the whole job on CPU. Trying one at a time costs a discarded
-/// session build per failed provider — once per detector load — and buys a
+/// session build per failed provider, once per detector load, and buys a
 /// truthful answer about what is running the model.
 fn build_session(
     entry: &ModelEntry,
@@ -467,8 +469,8 @@ fn declared_input_shape(session: &Session) -> DeclaredInput {
     }
     // A symbolic or unspecified axis comes back non-positive, and that is the
     // only case where feeding the graph more than one window at a time is
-    // sound. An export that pinned `batch` to a number — common enough in older
-    // YOLO exports — would fail the run outright, so it takes the per-window
+    // sound. An export that pinned `batch` to a number, common enough in older
+    // YOLO exports, would fail the run outright, so it takes the per-window
     // path instead.
     out.batchable = shape[0] <= 0;
     out
@@ -542,7 +544,7 @@ impl OnnxDetector {
                 Ok(extra) => sessions.push(extra),
                 Err(e) => {
                     // Not fatal: a machine short of memory simply gets a
-                    // smaller pool. Worth saying, though — otherwise the only
+                    // smaller pool. Worth saying, though: otherwise the only
                     // symptom is a run quietly less parallel than the same
                     // build on another machine.
                     ep_notes.push(format!(
@@ -575,7 +577,7 @@ impl OnnxDetector {
         })
     }
 
-    /// The input side actually in use — the model file's own, where it declares
+    /// The input side actually in use: the model file's own, where it declares
     /// one. Tiling needs this to size its grid.
     pub fn input_size(&self) -> u32 {
         self.input_size
@@ -598,7 +600,7 @@ impl OnnxDetector {
     ///
     /// This is the only function that feeds data through `ort`. It takes the
     /// input by value because the caller built it and has no further use for
-    /// it — the previous signature borrowed a slice and immediately copied it,
+    /// it. The previous signature borrowed a slice and immediately copied it,
     /// which at 640px is a five-megabyte memcpy per pass for nothing.
     ///
     /// Decoding happens while the session is still checked out, so the output
@@ -673,7 +675,7 @@ impl OnnxDetector {
 }
 
 impl Detector for OnnxDetector {
-    /// A model can emit exactly the categories its label map names — the
+    /// A model can emit exactly the categories its label map names. The
     /// three-class anime detectors can never report buttocks, however
     /// confidently they are asked.
     fn can_emit(&self, category: Category) -> bool {
@@ -716,9 +718,9 @@ impl Detector for OnnxDetector {
 
             for ((dets, lb), w) in per_window.into_iter().zip(&boxes).zip(chunk) {
                 all.extend(dets.into_iter().map(|mut d| {
-                    // Model space back to window space, clamped to the window —
+                    // Model space back to window space, clamped to the window:
                     // a box the model pushed past the edge of a tile is not
-                    // evidence about the frame beyond it — then offset into
+                    // evidence about the frame beyond it. Then offset into
                     // frame coordinates.
                     d.bbox = lb.invert(&d.bbox);
                     d.bbox.x1 = d.bbox.x1.clamp(0.0, w.width_f()) + w.x as f32;

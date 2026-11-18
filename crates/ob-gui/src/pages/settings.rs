@@ -75,7 +75,7 @@ fn appearance(app: &mut ObApp, ui: &mut egui::Ui) {
         theme::section(ui, "Accent colour");
         theme::hint(
             ui,
-            "Used for the primary action, selection and progress — the few \
+            "Used for the primary action, selection and progress: the few \
              things that should stand out.",
         );
         ui.add_space(6.0);

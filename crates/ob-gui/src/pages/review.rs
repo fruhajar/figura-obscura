@@ -5,8 +5,8 @@
 //! canvas the Edit page uses, and what leaves here is what gets burned into the
 //! files.
 //!
-//! Every box drawn here goes through `CensorConfig::resolve` — the same call
-//! the commit makes — so the canvas is not an impression of the output, it is
+//! Every box drawn here goes through `CensorConfig::resolve`, the same call
+//! the commit makes, so the canvas is not an impression of the output, it is
 //! the output with the pixels still reversible.
 
 use crate::app::{ObApp, ToastKind};
@@ -93,7 +93,7 @@ fn done_state(app: &mut ObApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.label(
             RichText::new(if edited == 0 {
-                "Committed exactly as detected — nothing was changed in review.".to_string()
+                "Committed exactly as detected. Nothing was changed in review.".to_string()
             } else {
                 format!("{edited} of them with corrections you made here.")
             })
@@ -488,7 +488,7 @@ fn file_name(path: &Path) -> String {
 /// Bring the canvas into step with the cursor, decoding the frame if it moved.
 ///
 /// Called from the frame loop rather than from the page body so it also runs
-/// while the user is on another tab — a review left on the Queue tab and come
+/// while the user is on another tab: a review left on the Queue tab and come
 /// back to should not need a click to redraw itself.
 pub fn sync_canvas(app: &mut ObApp) {
     let Some(session) = app.review.as_ref() else {

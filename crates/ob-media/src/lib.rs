@@ -55,7 +55,8 @@ pub fn load_image(path: &Path) -> Result<Frame, MediaError> {
 /// Encode an RGB8 [`Frame`] to an image file (format inferred from extension).
 ///
 /// Copies the buffer, because the caller keeps its frame. The batch pipeline
-/// does not — it is finished with the frame at this point — so it should use
+/// does not, since it is finished with the frame at this point, so it should
+/// use
 /// [`save_image_owned`] and skip a full-resolution memcpy per file.
 pub fn save_image(frame: &Frame, path: &Path) -> Result<(), MediaError> {
     save_image_owned(frame.clone(), path)
@@ -83,7 +84,7 @@ pub const IMAGE_EXTS: &[&str] = &[
 ///
 /// Deliberately broad. Every one of these is a container ffmpeg demuxes without
 /// special handling, and the previous six-entry list was rejecting perfectly
-/// ordinary files — a `.wmv` or a camcorder's `.mts` was classified `Unknown`
+/// ordinary files. A `.wmv` or a camcorder's `.mts` was classified `Unknown`
 /// and skipped, which reads to the user as the tool being broken rather than as
 /// the tool declining. The cost of a wrong guess here is one clear per-file
 /// error; the cost of omitting a format is a file silently not processed.
@@ -96,7 +97,7 @@ pub const VIDEO_EXTS: &[&str] = &[
 /// Classify a path by extension.
 ///
 /// Serializable because a saved review records what each item was, and a stored
-/// review has to come back knowing which items are videos — that is what
+/// review has to come back knowing which items are videos, and that is what
 /// decides whether the tracker replays at commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -141,7 +142,7 @@ fn gif_is_animated(path: &Path) -> bool {
 ///
 /// `.gif` is two formats wearing one extension: a still image, and an animation
 /// container. Treating every GIF as a still meant an animated one was censored
-/// on frame 1 and written back with every other frame discarded — the animation
+/// on frame 1 and written back with every other frame discarded, the animation
 /// destroyed, and the user given no indication of it. So an animated GIF is a
 /// video, and a single-frame GIF stays an image and keeps working with no
 /// ffmpeg installed.
@@ -164,7 +165,7 @@ fn has_ext(path: &Path, want: &str) -> bool {
 /// Ask ffprobe what `path` is, for files whose extension says nothing.
 ///
 /// This costs a child process, so it is reserved for files the user named
-/// explicitly — naming a file is a statement of intent, where walking a
+/// explicitly. Naming a file is a statement of intent, where walking a
 /// directory is a search and must not spawn an ffprobe per `.txt`.
 ///
 /// Returns `Unknown` when ffprobe is absent or the file has no video stream, so
@@ -193,7 +194,7 @@ mod tests {
     #[test]
     fn ordinary_containers_are_recognised() {
         // Each of these was `Unknown` before, so the file was skipped without
-        // ever being opened — which users read as the tool being broken.
+        // ever being opened, which users read as the tool being broken.
         for ext in [
             "wmv", "flv", "mts", "m2ts", "mpg", "ts", "3gp", "vob", "ogv",
         ] {

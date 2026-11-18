@@ -1,4 +1,4 @@
-//! Letterbox preprocessing — pure and fully testable without ONNX Runtime.
+//! Letterbox preprocessing: pure and fully testable without ONNX Runtime.
 //!
 //! YOLO-family models expect a square input with the image scaled to fit and
 //! padded (letterboxed). We record the scale/pad so detections can be mapped
@@ -6,8 +6,8 @@
 //!
 //! # Why the resampler matters
 //!
-//! Detection runs on a downscaled copy of the frame — a 4K frame reaching a
-//! 640px model input is scaled by ~0.167 — so the resampler decides whether a
+//! Detection runs on a downscaled copy of the frame, and a 4K frame reaching a
+//! 640px model input is scaled by ~0.167, so the resampler decides whether a
 //! small feature survives the trip. Point sampling (nearest neighbour) reads one
 //! source pixel per output pixel and simply misses everything between samples,
 //! which is why small subjects in high-resolution sources used to vanish before
@@ -20,8 +20,8 @@
 //! than the choice of kernel.
 //!
 //! The default is [`Resampler::Triangle`]. With support scaling a triangle
-//! filter approaches a box/area average at large minification factors — the
-//! standard choice for feeding detectors — while staying close in character to
+//! filter approaches a box or area average at large minification factors, the
+//! standard choice for feeding detectors, while staying close in character to
 //! the bilinear resize these models saw during training, which keeps inference
 //! preprocessing consistent with training preprocessing. [`Resampler::Lanczos3`]
 //! retains slightly more acutance on fine detail but rings around hard edges,
@@ -33,7 +33,7 @@ use ob_core::geometry::{BBox, Frame, Region};
 /// The resampling kernel used when scaling a frame into model input space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Resampler {
-    /// Point sampling. Fast, aliases badly on downscale — kept for parity with
+    /// Point sampling. Fast, aliases badly on downscale. Kept for parity with
     /// the original implementation and for benchmarking, not recommended.
     Nearest,
     /// Bilinear / tent filter, support-scaled on minification. The default.
@@ -127,7 +127,7 @@ fn sinc(x: f32) -> f32 {
 ///
 /// The obvious shape for this is a `Vec` of per-destination structs each owning
 /// its own weight `Vec`, which is what this was. For a 640px target that is 640
-/// separate allocations, rebuilt on every pass — and a tiled 4K frame pays it
+/// separate allocations, rebuilt on every pass, and a tiled 4K frame pays it
 /// twice per pass across thirteen passes. One allocation per axis instead, with
 /// `weights[offsets[d]..offsets[d + 1]]` holding destination `d`'s taps.
 struct Taps {
@@ -273,12 +273,12 @@ const PARALLEL_PIXEL_THRESHOLD: usize = 1 << 20;
 /// of its workers is on a machine whose cores are *fully committed*, and
 /// splitting it further buys nothing while adding scheduling overhead and cache
 /// pressure to every other worker. Measured, that nesting cost about a third of
-/// the image throughput — enough to swallow an eightfold speedup in this very
+/// the image throughput, enough to swallow an eightfold speedup in this very
 /// function and still come out behind.
 ///
 /// `current_thread_index` answers it exactly: `Some` means a rayon worker is
-/// calling, so the pool is already busy; `None` means a plain thread is — the
-/// video pipeline, a GUI preview, a single-file CLI run — and the cores are
+/// calling, so the pool is already busy; `None` means a plain thread is (the
+/// video pipeline, a GUI preview, a single-file CLI run) and the cores are
 /// idle unless this function uses them.
 fn worth_splitting(pixels: usize) -> bool {
     pixels >= PARALLEL_PIXEL_THRESHOLD && rayon::current_thread_index().is_none()
@@ -306,7 +306,7 @@ pub fn letterbox_chw_with(frame: &Frame, size: u32, filter: Resampler) -> (Vec<f
 ///
 /// Writing straight into the caller's planar buffer is the point. The previous
 /// route allocated an interleaved `dst_w × dst_h × 3` result, then copied it
-/// pixel by pixel into the planar tensor — two costs that exist only because
+/// pixel by pixel into the planar tensor: two costs that exist only because
 /// the two stages did not know about each other. It also means a batch of
 /// windows can be assembled into one contiguous tensor with no per-window
 /// allocation at all (see [`letterbox_batch`]).
@@ -519,7 +519,7 @@ pub fn letterbox_batch(
     // One window is the untiled case: leave the cores to the row-level split
     // inside, which is where the work actually is for a full 4K frame. Several
     // windows are tiles, each too small to be worth splitting by rows, so the
-    // windows themselves are the unit of work — but only when the caller is not
+    // windows themselves are the unit of work, but only when the caller is not
     // itself a rayon worker, for the reason [`worth_splitting`] gives.
     if windows.len() > 1 && rayon::current_thread_index().is_none() {
         use rayon::prelude::*;
@@ -645,7 +645,7 @@ mod tests {
     fn small_feature_survives_heavy_downscale() {
         let (w, h) = (512u32, 512u32);
         let mut data = vec![0u8; (w * h * 3) as usize];
-        // A 4x4 white square at (101, 101) — deliberately not on an 8px grid.
+        // A 4x4 white square at (101, 101), deliberately not on an 8px grid.
         for y in 101..105 {
             for x in 101..105 {
                 let p = ((y * w + x) * 3) as usize;

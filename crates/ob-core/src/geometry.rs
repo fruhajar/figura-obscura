@@ -63,7 +63,7 @@ impl BBox {
         }
     }
 
-    /// The top `frac` strip of this box — used to derive an eye band from a
+    /// The top `frac` strip of this box, used to derive an eye band from a
     /// face box in v1 (see plan: "Eyes" category).
     pub fn top_strip(&self, frac: f32) -> BBox {
         BBox {
@@ -161,7 +161,7 @@ impl Region {
         Region { x, y, w, h }
     }
 
-    /// The region covering all of `frame` — what an untiled pass looks at.
+    /// The region covering all of `frame`: what an untiled pass looks at.
     pub fn whole(frame: &Frame) -> Region {
         Region {
             x: 0,
@@ -174,8 +174,8 @@ impl Region {
     /// Clip to a `frame_w × frame_h` frame, returning `None` when nothing of
     /// the region falls inside it.
     ///
-    /// Callers may hand in a window that runs off an edge — the tile planner
-    /// deliberately does, to cover the border without a runt tile — and get back
+    /// Callers may hand in a window that runs off an edge, as the tile planner
+    /// deliberately does to cover the border without a runt tile, and get back
     /// the overlapping part.
     pub fn clamped(&self, frame_w: u32, frame_h: u32) -> Option<Region> {
         let x = self.x.min(frame_w);
@@ -243,7 +243,7 @@ mod tests {
         let f = Frame::new(3, 2, data).unwrap();
         let c = f.crop(1, 0, 2, 2).unwrap();
         assert_eq!((c.width, c.height), (2, 2));
-        // Row 0: indices 1,2 — row 1: indices 4,5.
+        // Row 0: indices 1,2. Row 1: indices 4,5.
         assert_eq!([c.data[0], c.data[3], c.data[6], c.data[9]], [1u8, 2, 4, 5]);
     }
 

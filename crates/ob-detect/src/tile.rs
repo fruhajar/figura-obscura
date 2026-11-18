@@ -2,7 +2,7 @@
 //!
 //! A single whole-frame pass letterboxes the entire image into the model's
 //! square input, so on a large source everything shrinks: a 4K frame reaching a
-//! 640px input is scaled by ~0.167, turning a 30px feature into 5px — at or
+//! 640px input is scaled by ~0.167, turning a 30px feature into 5px, at or
 //! below YOLOv8's smallest stride (8px). Anti-aliased resampling
 //! ([`crate::preprocess::Resampler`]) stops such features from disappearing
 //! outright, but it cannot give the model back the resolution it needs.
@@ -24,7 +24,7 @@ use ob_core::taxonomy::Category;
 /// When to spend the extra inference passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TilingMode {
-    /// Never tile — one whole-frame pass, the pre-tiling behaviour.
+    /// Never tile: one whole-frame pass, the pre-tiling behaviour.
     Off,
     /// Tile only when the whole-frame pass would downscale past
     /// [`TilingConfig::min_scale`]. The default.
@@ -88,7 +88,7 @@ pub type Tile = Region;
 
 /// Plan the tile grid for a `frame_w × frame_h` frame and a `input_size` model.
 ///
-/// Tiles start at the model's native input size (scale 1.0 — no downscale at
+/// Tiles start at the model's native input size (scale 1.0, no downscale at
 /// all) and grow until the grid fits within `max_tiles`. Returns an empty vec
 /// when a single tile would already cover the frame, i.e. when tiling would just
 /// repeat the whole-frame pass.
@@ -139,7 +139,7 @@ pub fn plan_tiles(frame_w: u32, frame_h: u32, input_size: u32, cfg: &TilingConfi
 /// [`TilingMode`] and `min_scale`.
 ///
 /// It takes dimensions rather than a [`Frame`] so that anything holding only a
-/// size can ask — notably `ob_job::estimate`, which costs a batch from image
+/// size can ask, notably `ob_job::estimate`, which costs a batch from image
 /// headers without decoding a pixel. Cost estimates and the detector therefore
 /// share one implementation and cannot drift apart.
 pub fn tiles_for_size(w: u32, h: u32, input_size: u32, cfg: &TilingConfig) -> Vec<Tile> {
@@ -167,7 +167,7 @@ pub struct TiledDetector<D: Detector> {
 
 impl<D: Detector> TiledDetector<D> {
     /// Wrap `inner`. `input_size` is the model's square input side and
-    /// `nms_iou` the IoU used to merge overlapping passes — pass the same
+    /// `nms_iou` the IoU used to merge overlapping passes. Pass the same
     /// values the inner detector was built with.
     pub fn new(inner: D, input_size: u32, nms_iou: f32, cfg: TilingConfig) -> Self {
         Self {
@@ -196,8 +196,9 @@ impl<D: Detector> Detector for TiledDetector<D> {
     }
 
     fn detect(&self, frame: &Frame) -> Result<Vec<Detection>, DetectError> {
-        // The whole frame first — it is the only pass that sees large regions
-        // in full, and the only one that runs when tiling is off — then the
+        // The whole frame first, since it is the only pass that sees large
+        // regions in full and the only one that runs when tiling is off. Then
+        // the
         // grid. All of it goes in one call, so a detector whose graph takes a
         // batch axis answers the lot in one or two runs instead of thirteen.
         let mut windows = Vec::with_capacity(1 + self.cfg.max_tiles);
@@ -208,7 +209,7 @@ impl<D: Detector> Detector for TiledDetector<D> {
 
         // One global NMS over every pass. Note this keeps a box that a tile saw
         // only partially (cut at a seam) alongside the full box from the
-        // overlapping neighbour when their IoU is low — for censoring, covering
+        // overlapping neighbour when their IoU is low. For censoring, covering
         // a region twice is harmless and covering it not at all is not.
         Ok(nms(all, self.nms_iou))
     }

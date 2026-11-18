@@ -1,7 +1,7 @@
 //! The review session: which item and frame are on the canvas, and getting
 //! edits back out of it.
 //!
-//! The canvas itself is the Edit page's, unchanged — same drag, resize,
+//! The canvas itself is the Edit page's, unchanged: same drag, resize,
 //! selection and undo. All this adds is a cursor over the batch and the two
 //! conversions at its edges: detections into a document on the way in, and the
 //! document back into detections on the way out.
@@ -354,7 +354,7 @@ mod tests {
             },
         ];
         let s = ReviewSession::new(Review { items: vec![v] });
-        // Slot 3 is frame 9, which was reviewed down to nothing — so it is not
+        // Slot 3 is frame 9, which was reviewed down to nothing, so it is not
         // somewhere the "next region" button should stop.
         assert_eq!(s.next_populated_slot(0), Some(1));
         assert_eq!(s.next_populated_slot(1), Some(5));

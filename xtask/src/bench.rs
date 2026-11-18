@@ -1,4 +1,4 @@
-//! `cargo xtask bench` — time the real pipeline over a synthetic corpus.
+//! `cargo xtask bench`: time the real pipeline over a synthetic corpus.
 //!
 //! Micro-benchmarks tell you a function got faster; they do not tell you a run
 //! got shorter. This drives the shipped `obscura` binary over generated media
@@ -23,7 +23,7 @@
 //! end-to-end tiling figure instead.
 //!
 //! This reports nothing about GPU execution providers. It measures whatever the
-//! binary it is handed was built with — read the `--version` banner it prints
+//! binary it is handed was built with, so read the `--version` banner it prints
 //! before believing any figure here is about a GPU.
 
 use anyhow::{bail, Context, Result};
@@ -33,8 +33,8 @@ use std::time::{Duration, Instant};
 
 /// Image sizes in the corpus, with how many of each.
 ///
-/// The 4K entries are the case the tiling work exists for — they are what
-/// actually tiles — and the 720p ones are there so the total is not dominated
+/// The 4K entries are the case the tiling work exists for, since they are what
+/// actually tiles, and the 720p ones are there so the total is not dominated
 /// by a handful of enormous files.
 const IMAGES: &[(u32, u32, usize)] = &[(3840, 2160, 4), (1920, 1080, 6), (1280, 720, 10)];
 
@@ -297,7 +297,7 @@ fn ensure_corpus(dir: &Path) -> Result<()> {
             .unwrap_or(false);
         if !ok {
             let _ = std::fs::remove_dir_all(&video);
-            println!("  (ffmpeg unavailable — the video case will be skipped)");
+            println!("  (ffmpeg unavailable, so the video case will be skipped)");
         }
     }
     Ok(())

@@ -1,7 +1,7 @@
 //! The Edit page: censor one image by hand.
 //!
 //! The detector is the whole point of the product, but it is not always right
-//! and it is not always what is wanted — a frame it missed, a licence plate or
+//! and it is not always what is wanted: a frame it missed, a licence plate or
 //! a face no model here is trained to find, one region of a hundred that needs
 //! a different treatment. This page is the manual fallback: load an image, drag
 //! boxes over it, give each one a style, save the result.
@@ -408,7 +408,7 @@ pub(crate) fn canvas(app: &mut ObApp, ui: &mut egui::Ui) {
             rect.center_bottom() - Vec2::new(0.0, 14.0),
             Align2::CENTER_BOTTOM,
             if app.editor.mode == edit::CanvasMode::Review {
-                "Nothing was detected here — drag to cover something the model missed"
+                "Nothing was detected here. Drag to cover something the model missed"
             } else {
                 "Drag to draw a censor box"
             },
@@ -474,7 +474,7 @@ fn refresh_composite(app: &mut ObApp, ctx: &egui::Context) {
         }
         Some(Err(e)) => {
             // Mark the attempt spent as well as reporting it: a document that
-            // will not render — an overlay image that has gone missing, say —
+            // will not render, an overlay image that has gone missing say,
             // must not be retried on every frame forever.
             app.editor.error = Some(e.to_string());
             app.editor.rendered = Some(key);
@@ -754,7 +754,8 @@ fn save(app: &mut ObApp, frame: Frame, path: &Path) {
 ///
 /// Always PNG, whatever came in: the source may be a JPEG, and re-encoding a
 /// censored frame as lossy JPEG can leave ghosts of a pixelated region's edges.
-/// Never the input's own name — a manual edit must not silently overwrite the
+/// Never the input's own name, because a manual edit must not silently
+/// overwrite the
 /// original.
 fn default_name(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
@@ -769,8 +770,9 @@ fn file_name(path: &Path) -> String {
 
 /// True when this page should take a dropped file instead of the batch queue.
 ///
-/// Images only. A video dropped here has no manual-edit path — there is one
-/// canvas and one frame — so it belongs in the queue, which is where a drop on
+/// Images only. A video dropped here has no manual-edit path, since there is
+/// one
+/// canvas and one frame, so it belongs in the queue, which is where a drop on
 /// any other page sends it.
 pub fn wants_drop(path: &Path) -> bool {
     matches!(ob_media::classify(path), ob_media::MediaKind::Image)
@@ -818,8 +820,9 @@ mod tests {
     }
 
     /// One frame with `held` down. The modifiers a widget reads come from
-    /// `RawInput::modifiers`, not from the events — an integration reports the
-    /// keyboard's state alongside them — so a test that only decorated its
+    /// `RawInput::modifiers`, not from the events, because an integration
+    /// reports the keyboard's state alongside them. So a test that only
+    /// decorated its
     /// events would see no Ctrl at all.
     fn run_held(app: &mut ObApp, ctx: &egui::Context, events: Vec<Event>, held: Modifiers) {
         let input = RawInput {

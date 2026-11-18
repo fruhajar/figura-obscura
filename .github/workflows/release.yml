@@ -2,7 +2,7 @@ name: Release
 
 # Tag-driven. `git tag v0.1.0 && git push origin v0.1.0` builds every platform
 # and opens a DRAFT release with the artifacts attached; publishing is a manual
-# click. Draft rather than live on purpose — an unsigned installer and a licence
+# click. Draft rather than live on purpose: an unsigned installer and a licence
 # file both deserve a look before anyone can download them.
 on:
   push:
@@ -67,7 +67,22 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # Pinned, not `stable`. ort-sys 2.0.0-rc.10's build script finds the
+      # target directory with `out_dir.ancestors().nth(3)`, which assumes the
+      # old Cargo layout `build/<pkg>-<hash>/out`. Newer Cargo splits that into
+      # `build/<pkg>/<hash>/out`, one level deeper, so the script resolves
+      # `target/release/build` instead of `target/release` and then tries to
+      # copy DirectML.dll into a `build/examples` directory that does not
+      # exist. Windows only: that copy path is #[cfg(windows)], and the
+      # CPU-only Linux dist is statically linked and ships no dylibs to copy.
+      # This broke v1.0.0 with nothing in the repo changed, because `stable`
+      # moved under us. A release should pin its compiler anyway.
+      #
+      # The `@stable` ref picks the action's own code; the `toolchain` input is
+      # what pins the compiler.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.os }}
@@ -144,7 +159,7 @@ jobs:
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists — uploading into it"
+            echo "release $tag already exists, uploading into it"
           else
             echo "creating draft release $tag"
             gh release create "$tag" \

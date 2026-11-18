@@ -6,8 +6,8 @@
 //! see what the detector missed is after the output exists.
 //!
 //! So this splits the pass in two. [`detect_pass`] runs the model and keeps
-//! only the geometry, writing nothing. [`commit_pass`] takes that geometry back
-//! — after a human has moved, added or deleted boxes — and writes the files,
+//! only the geometry, writing nothing. [`commit_pass`] takes that geometry
+//! back, after a human has moved, added or deleted boxes, and writes the files,
 //! **with no detector involved at all**. Nothing between the two can change
 //! what gets covered except the person reviewing it.
 //!
@@ -15,12 +15,12 @@
 //! score. A folder of ten thousand photos averaging ten detections each is
 //! about two megabytes; an hour of video at the default one-in-three detection
 //! rate is under three. The expensive thing a phase boundary costs is not
-//! memory, it is that the pixels have to be decoded twice — see
+//! memory, it is that the pixels have to be decoded twice. See
 //! [`commit_pass`].
 //!
 //! Styling is *not* stored. Review decides geometry; the profile decides
 //! appearance, and it is re-resolved at commit through
-//! [`CensorConfig::resolve`](ob_core::censor::CensorConfig::resolve) — the same
+//! [`CensorConfig::resolve`](ob_core::censor::CensorConfig::resolve), the same
 //! call the live preview makes. That keeps changing a censor style after a
 //! review from needing another detection pass, which is the same seam the
 //! preview's detect/compose split already runs along.
@@ -45,7 +45,7 @@ use std::sync::Mutex;
 /// The category a box drawn during review carries.
 ///
 /// One name for the sentinel the editor, the review and the censor policy all
-/// have to agree on — see [`cat::UNCLASSIFIED`] for why it is the value it is
+/// have to agree on. See [`cat::UNCLASSIFIED`] for why it is the value it is
 /// and why the style lookup special-cases it.
 pub const MANUAL: Category = cat::UNCLASSIFIED;
 
@@ -55,7 +55,7 @@ pub struct ReviewFrame {
     /// Frame number in decode order. Always 0 for an image.
     pub index: u64,
     /// Already passed through the profile's category filter, so this is what
-    /// would have been censored — not everything the model saw.
+    /// would have been censored, not everything the model saw.
     pub detections: Vec<Detection>,
 }
 
@@ -156,7 +156,7 @@ impl ReviewItem {
     /// An entry emptied this way is **kept**, not removed. On video that
     /// distinction is load-bearing: an entry with no detections tells the
     /// tracker at commit that the region is genuinely gone, where a missing
-    /// entry would leave it coasting — so a box deleted in review would come
+    /// entry would leave it coasting, so a box deleted in review would come
     /// back in the output.
     pub fn set_detections_at(&mut self, slot: usize, dets: Vec<Detection>) {
         let index = self.slot_index(slot);
@@ -194,7 +194,7 @@ impl Review {
         self.items.iter().map(|i| i.region_count()).sum()
     }
 
-    /// Items the detector found nothing in — the ones to look at first.
+    /// Items the detector found nothing in: the ones to look at first.
     pub fn clean_count(&self) -> usize {
         self.items.iter().filter(|i| i.is_clean()).count()
     }
@@ -426,7 +426,7 @@ fn detect_video(
 
 /// Phase two: write the files, using the reviewed geometry and no detector.
 ///
-/// The pixels are decoded a second time here — phase one kept the boxes and
+/// The pixels are decoded a second time here: phase one kept the boxes and
 /// threw the frames away, because holding a batch's worth of decoded video in
 /// memory is not an option. That second decode is what a review costs: roughly
 /// a third again on a folder of PNGs, and a second full pass over a video. It
@@ -543,8 +543,8 @@ fn commit_image(item: &ReviewItem, cfg: &JobConfig) -> Result<usize, JobError> {
 
 /// Replay a reviewed video through the tracker and the encoder.
 ///
-/// The tracker is fed exactly as the live pipeline feeds it — the reviewed
-/// detections on the frames the detector ran on, `None` in between — so
+/// The tracker is fed exactly as the live pipeline feeds it: the reviewed
+/// detections on the frames the detector ran on, `None` in between. So
 /// hysteresis and smoothing behave identically and a box moved during review
 /// carries through the frames that coast off it. That is also why the tracker
 /// has to run at all rather than the stored boxes simply being stamped onto
@@ -826,7 +826,7 @@ mod tests {
         let c = cfg(&profile, &src, &out);
 
         let mut review = detect_pass(&c, &detector, &|_| {}).unwrap();
-        // Keep one box, drop the other — the commonest review edit there is.
+        // Keep one box, drop the other: the commonest review edit there is.
         review.items[0].frames[0].detections.truncate(1);
         commit_pass(&c, &review, &|_| {}).unwrap();
         let edited = ob_media::load_image(&out.join("a.png")).unwrap();
@@ -903,7 +903,7 @@ mod tests {
             ],
         };
         assert_eq!(review.region_count(), 2);
-        // The file that failed is not "clean" — nothing was looked at in it.
+        // The file that failed is not "clean"; nothing was looked at in it.
         assert_eq!(review.clean_count(), 1);
         assert_eq!(review.failed_count(), 1);
     }
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn a_hand_drawn_box_is_not_styled_as_a_face() {
         // It borrows `Part::Face` to have a category at all, and Face is one of
-        // the per-part overrides the Tuning page offers — so without the
+        // the per-part overrides the Tuning page offers, so without the
         // carve-out, drawing a box over a licence plate during a review would
         // style it with whatever the user chose for faces.
         use ob_core::censor::{CensorConfig, CensorStyle};

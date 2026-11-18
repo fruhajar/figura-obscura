@@ -1,4 +1,4 @@
-//! Declarative settings metadata — the single source that powers CLI flags,
+//! Declarative settings metadata: the single source that powers CLI flags,
 //! GUI widgets **and** GUI tooltips (requirement R7).
 //!
 //! A [`Setting`] describes one tunable knob completely: its key, value kind

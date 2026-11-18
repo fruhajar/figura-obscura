@@ -25,8 +25,9 @@ pub fn header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
 }
 
 /// Domain badge. Which content a model was trained on is the single most
-/// consequential choice in the app — a photographic detector on illustration
-/// finds very little — so it is shown as a coloured chip, not buried in prose.
+/// consequential choice in the app, since a photographic detector on
+/// illustration finds very little, so it is shown as a coloured chip rather
+/// than buried in prose.
 pub fn domain_pill(ui: &mut egui::Ui, domain: Domain) {
     let p = theme::palette();
     match domain {

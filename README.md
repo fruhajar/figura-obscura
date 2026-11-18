@@ -20,7 +20,7 @@ There are two front ends over the same engine: **`obscura-gui`**, a desktop app
 with a live preview, and **`obscura`**, a command-line tool for batches and
 scripts.
 
-> **Status:** finished. **v0.7.0 is the last planned release.** The feature set
+> **Status:** finished. **v1.0.0 is the last planned release.** The feature set
 > is complete, installers exist for Windows, Linux and macOS, and
 > `cargo build --release`, `cargo test` (330 tests) and
 > `cargo clippy --all-targets` all pass on rustc 1.98.0. Clippy reports six
@@ -219,8 +219,8 @@ everything except the input and output ends.
   queue then walks you through what it found, on the same canvas the Edit page
   uses, where you can drag a box, resize it, delete a false positive or draw
   one over a region the model missed. **Write** then commits the result with no
-  detector involved. Files the detector found *nothing* in are listed too, and called
-  out: those are where a miss goes unnoticed. Only the geometry is reviewed;
+  detector involved. Files the detector found *nothing* in are listed too, and
+  called out: those are where a miss goes unnoticed. Only the geometry is reviewed;
   the censor style still comes from Tuning, so changing it afterwards re-paints
   without another detection pass.
 

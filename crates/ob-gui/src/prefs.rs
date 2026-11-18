@@ -1,6 +1,6 @@
 //! Persisted user state.
 //!
-//! Two things are saved, in one file: the [`Profile`] (what to censor and how —
+//! Two things are saved, in one file: the [`Profile`] (what to censor and how,
 //! the same structure `obscura process --profile` loads, so the GUI and the CLI can
 //! exchange configurations) and the UI-only preferences around it.
 //!
@@ -48,8 +48,9 @@ impl Tab {
         }
     }
 
-    /// A glyph for the nav rail, taken from the checked table in `theme::glyph`
-    /// — egui's bundled fonts cover an awkward subset of the symbol blocks and
+    /// A glyph for the nav rail, taken from the checked table in
+    /// `theme::glyph`. egui's bundled fonts cover an awkward subset of the
+    /// symbol blocks, and
     /// an uncovered character renders as a silent tofu box.
     pub fn glyph(self) -> &'static str {
         use crate::theme::glyph;
@@ -68,8 +69,8 @@ impl Tab {
 ///
 /// `System` is the default rather than `Dark`: an app that ignores the desktop's
 /// own light/dark setting is the kind of detail people notice immediately. Where
-/// the platform does not report one — a bare window manager, most Linux setups
-/// without a portal — it resolves to dark, which is what the app shipped with.
+/// the platform does not report one (a bare window manager, most Linux setups
+/// without a portal) it resolves to dark, which is what the app shipped with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -327,7 +328,7 @@ mod tests {
     #[test]
     fn a_theme_mode_resolves_against_what_the_desktop_reports() {
         // An explicit choice ignores the desktop; System follows it, and falls
-        // back to dark where the platform reports nothing — which is most Linux
+        // back to dark where the platform reports nothing, which is most Linux
         // setups without a portal, so it is the common case rather than an edge.
         assert!(ThemeMode::Dark.is_dark(Some(false)));
         assert!(!ThemeMode::Light.is_dark(Some(true)));
