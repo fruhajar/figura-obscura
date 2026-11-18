@@ -429,12 +429,9 @@ still means what it should: the detector saw nothing anywhere it looked.
 
 ## Licence
 
-Figura Obscura is released under the **PolyForm Noncommercial License 1.0.0**
-(`LICENSE`). The source may be read, forked and modified; use is limited to
-noncommercial purposes, and the commercial rights stay with the copyright holder.
-It is a source-available licence rather than an open-source one. GitHub's licence
-picker only offers OSI-approved licences, so the file is committed directly
-instead of generated, which changes nothing about its effect.
+Figura Obscura is released under the **MIT License** (`LICENSE`),
+Copyright (c) 2026 Jaroslav Frühauf. Read it, fork it, change it, ship it,
+sell it; keep the copyright notice with it and expect no warranty.
 
 Three things it does **not** cover, each licensed separately:
 

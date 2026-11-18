@@ -1,7 +1,8 @@
 //! The About page: version, credits, licences and support information.
 //!
 //! Not decoration. The detector weights come from third parties under their own
-//! licences, and a product that is sold has to say so plainly and name them.
+//! licences, and anything that redistributes them has to say so plainly and
+//! name them.
 
 use crate::app::{ObApp, ToastKind};
 use crate::pages;
@@ -49,6 +50,14 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
                          network is to download a detector model.",
                     )
                     .color(p.text_dim),
+                );
+                ui.add_space(4.0);
+                // The third-party licences below are named, so leaving our own
+                // unnamed read as an omission.
+                ui.label(
+                    RichText::new("MIT licence. Copyright (c) 2026 Jaroslav Frühauf.")
+                        .size(11.5)
+                        .color(p.text_faint),
                 );
             });
 

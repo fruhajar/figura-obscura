@@ -1,46 +1,21 @@
-Figura Obscura
-Copyright (c) 2026 <COPYRIGHT HOLDER>
+MIT License
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Copyright (c) 2026 Jaroslav Frühauf
 
-################################################################################
-##                                                                            ##
-##   PLACEHOLDER — THIS FILE IS NOT YET THE LICENSE.                          ##
-##   Do not publish this repository until the text below is replaced.         ##
-##                                                                            ##
-################################################################################
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Two things must be done on a machine with network access before release:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-  1. Replace <COPYRIGHT HOLDER> above with the name the copyright belongs to.
-     PolyForm names this party the "licensor", and it is who reserves the
-     commercial rights — so it must be a real legal name, not a handle.
-
-  2. Replace everything below the line at the bottom of this file with the
-     complete, verbatim text of the PolyForm Noncommercial License 1.0.0, from:
-
-         https://polyformproject.org/licenses/noncommercial/1.0.0/
-
-The text was deliberately NOT reproduced from memory when this file was created.
-A license is a legal document and has to be byte-exact; the machine this repo
-was renamed on had no network access, and a subtly wrong license is worse than
-an obviously missing one.
-
-What this license does, in short (not a substitute for the real text):
-
-  - The source may be read, forked, modified and shared.
-  - Use is limited to noncommercial purposes. Personal use and use by
-    noncommercial organizations qualify; selling it, or using it to make money,
-    does not.
-  - The commercial rights stay with the licensor, so nobody else may sell this
-    or a derivative of it.
-
-Bundled third-party components (FFmpeg, ONNX Runtime and the Rust dependency
-tree) keep their own separate licenses, which are NOT affected by this file.
-See packaging/common/THIRD-PARTY.md.
-
-Detector model weights are downloaded at runtime, are not part of this
-repository, and carry their own licenses — each one is recorded in the model
-registry (crates/ob-core/src/registry.rs) and shown by `obscura models list`.
-
---- REPLACE EVERYTHING BELOW THIS LINE WITH THE LICENSE TEXT -------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

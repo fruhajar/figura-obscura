@@ -34,6 +34,14 @@ it has no server behind it and nothing to expire.
   rather than by switching pages to find what went wrong. The choice is
   per-machine and saved with your other settings, so it does not travel when
   you export a profile. Settings files written by earlier versions still load.
+- **The project now has a licence.** `LICENSE` had never been filled in: it
+  held a placeholder telling the author to replace it before publishing, which
+  means every earlier release shipped without a grant of any kind, and the
+  Windows installer presented that placeholder as its licence agreement.
+  Figura Obscura is **MIT** licensed, Copyright (c) 2026 Jaroslav Frühauf. If
+  you took an earlier copy and wondered what you were allowed to do with it,
+  the answer is now in the file, and it is permissive. The About page states it
+  alongside the third-party licences it already named.
 - **Fixed:** the GUI tests required ffmpeg to be installed, so a checkout
   tested on a machine without it failed for a reason that had nothing to do
   with the change under test.
