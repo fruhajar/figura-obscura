@@ -3,7 +3,7 @@
 #
 #   packaging/linux/build.sh [--ffmpeg DIR] [--gpu none|cuda|webgpu] [--skip-appimage]
 #
-# The tarball is the primary artifact — it works everywhere, and its install.sh
+# The tarball is the primary artifact. It works everywhere, and its install.sh
 # wires up the desktop entry and icons without needing root. The
 # AppImage is a convenience for people who want a single file, and needs
 # `appimagetool` (downloaded on demand if absent).
@@ -85,7 +85,7 @@ else
     cp "$appdir/usr/share/icons/hicolor/256x256/apps/figura-obscura.png" "$appdir/figura-obscura.png"
     cp "$appdir/figura-obscura.png" "$appdir/.DirIcon"
 
-    # AppRun: resolve the AppDir and exec the GUI from it. `exec` matters — the
+    # AppRun: resolve the AppDir and exec the GUI from it. `exec` matters: the
     # process the desktop launched must *become* the app, or the window manager
     # loses track of it and the taskbar entry never settles.
     cat > "$appdir/AppRun" <<'APPRUN'

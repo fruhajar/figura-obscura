@@ -77,7 +77,7 @@ install -m 0644 "$repo_root/packaging/common/THIRD-PARTY.md" \
     "$app/Contents/Resources/THIRD-PARTY.md"
 install -m 0644 "$repo_root/LICENSE" "$app/Contents/Resources/LICENSE"
 
-# ob-media searches Contents/Resources/bin — see ob-media::tools::bundle_dirs.
+# ob-media searches Contents/Resources/bin. See ob-media::tools::bundle_dirs.
 if [[ -n "$ffmpeg_dir" ]]; then
     for tool in ffmpeg ffprobe; do
         src="$ffmpeg_dir/$tool"
@@ -103,7 +103,7 @@ if [[ -n "$sign_id" ]]; then
         --entitlements "$entitlements" --sign "$sign_id" "$app"
     codesign --verify --deep --strict --verbose=2 "$app"
 else
-    echo "warning: not signed — Gatekeeper will refuse this on any other Mac." >&2
+    echo "warning: not signed, so Gatekeeper will refuse this on any other Mac." >&2
 fi
 
 # --- 4. dmg -----------------------------------------------------------------

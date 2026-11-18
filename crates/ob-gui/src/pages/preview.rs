@@ -5,7 +5,7 @@
 //! page you happen to be reading it from.
 //!
 //! On the Tuning page this sits beside the controls and re-renders itself as
-//! they change. That adjacency is the point — judging a confidence threshold or
+//! they change. That adjacency is the point: judging a confidence threshold or
 //! a padding fraction means seeing the result, and a preview that costs a page
 //! switch and a button press is a preview that stops being consulted.
 
@@ -152,7 +152,7 @@ fn body(app: &mut ObApp, ui: &mut egui::Ui) {
     let avail = ui.available_width();
     // Side by side halves the width each frame gets, which in a narrow side
     // panel leaves two images too small to judge anything by. Stack them there
-    // instead — the comparison is just as direct and each frame is twice the
+    // instead. The comparison is just as direct and each frame is twice the
     // size.
     let stacked = compare && avail < SIDE_BY_SIDE_MIN;
     let each = if compare && !stacked {
@@ -201,7 +201,7 @@ fn empty_state(app: &ObApp, ui: &mut egui::Ui) {
     } else if app.preview_path().is_none() {
         "Add a file to the batch, or pick a sample above, to see what will be censored."
     } else if !app.model_ready() {
-        "The selected model is not installed — get it on the Models page."
+        "The selected model is not installed. Get it on the Models page."
     } else if app.prefs.preview_auto {
         "Rendering…"
     } else {

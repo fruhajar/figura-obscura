@@ -1,6 +1,6 @@
-# Build output. Everything the packaging scripts emit lands under here too —
+# Build output. Everything the packaging scripts emit lands under here too:
 # stage/, dist/, installer/, screenshots/, the *.AppDir, the .app, and the
-# cached appimagetool — so this one line covers all of it.
+# cached appimagetool. One line covers all of it.
 /target
 
 # Rust
@@ -12,7 +12,7 @@ Cargo.lock.orig
 /models
 *.onnx
 
-# Editor and OS noise. macOS earns its place here — the .app and .dmg are built
+# Editor and OS noise. macOS earns its place here because the .app and .dmg are built
 # on a Mac, and Finder salts .DS_Store into every directory it opens.
 .DS_Store
 .idea/

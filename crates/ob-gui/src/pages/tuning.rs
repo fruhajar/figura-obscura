@@ -80,7 +80,7 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
                 .id_salt("tuning-controls")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    // Two columns where there is room — policy on the left,
+                    // Two columns where there is room: policy on the left,
                     // appearance on the right. The stacked single column this
                     // replaced ran to three screens, which is also what a
                     // narrow window gets.
@@ -157,7 +157,7 @@ fn appearance(app: &mut ObApp, ui: &mut egui::Ui) {
         .on_hover_text(
             "Grow each box by this fraction of its size on every side before \
              censoring. Not capped at 1.0: a detector that reports a small part \
-             of a region — the anime model's nipple box, say — needs several \
+             of a region, the anime model's nipple box say, needs several \
              times the box's own size to cover the surrounding area. Boxes are \
              still clamped to the frame.",
         );
@@ -230,7 +230,7 @@ fn model_picker(app: &mut ObApp, ui: &mut egui::Ui) {
         app.select_model(&selected);
         if !app.model_ready() {
             app.toast(
-                "That model is not downloaded yet — get it on the Models page.",
+                "That model is not downloaded yet. Get it on the Models page.",
                 ToastKind::Info,
             );
         }
@@ -276,7 +276,7 @@ fn cross_examination(app: &mut ObApp, ui: &mut egui::Ui) {
     if candidates.is_empty() {
         theme::hint(
             ui,
-            "No other models are installed — add one on the Models page to \
+            "No other models are installed. Add one on the Models page to \
              cross-examine with.",
         );
         return;
@@ -299,7 +299,7 @@ fn cross_examination(app: &mut ObApp, ui: &mut egui::Ui) {
         if !*installed && on {
             theme::hint(
                 ui,
-                "This model is selected but not downloaded — the run will fail \
+                "This model is selected but not downloaded, so the run will fail \
                  until you get it on the Models page or clear it here.",
             );
         }
@@ -590,7 +590,7 @@ fn import_profile(app: &mut ObApp) {
             if !known {
                 app.prefs.profile.model_id = app.registry[0].id.to_string();
                 app.toast(
-                    format!("Imported, but model `{model_id}` is unknown — using the default."),
+                    format!("Imported, but model `{model_id}` is unknown, using the default."),
                     ToastKind::Info,
                 );
             } else {
@@ -689,7 +689,7 @@ pub fn style_controls(ui: &mut egui::Ui, style: &mut CensorStyle, id_salt: &str)
             .on_hover_text(
                 "Mosaic cell size. A block that looked coarse on a 720p frame is \
                  barely visible on a 4K one, so this is not capped at a preset \
-                 maximum — scale it with the source.",
+                 maximum. Scale it with the source.",
             );
         }
         CensorStyle::Blur { sigma } => {

@@ -9,14 +9,15 @@
 //! the future real-time screen tool (`ob-screen`, requirement R10).
 //!
 //! ## Module map
-//! - [`taxonomy`] — the canonical `Category` vocabulary (R3).
-//! - [`geometry`] — `BBox`, `Detection`, `Frame` (RGB8, codec-free).
-//! - [`settings`] — declarative `Setting` metadata powering CLI+GUI+tooltips (R7).
-//! - [`registry`] — self-describing downloadable model entries (R7, R8).
-//! - [`filter`]   — selective-censoring rules over the taxonomy (R3).
-//! - [`censor`]   — box censor styles and per-part overrides (R4).
-//! - [`profile`]  — the serializable "what + how" job profile.
-//! - [`version`]  — the build's version + commit, for `--version`.
+//! - [`taxonomy`]: the canonical `Category` vocabulary (R3).
+//! - [`geometry`]: `BBox`, `Detection`, `Frame` (RGB8, codec-free).
+//! - [`settings`]: declarative `Setting` metadata powering the CLI, the GUI
+//!   and its tooltips (R7).
+//! - [`registry`]: self-describing downloadable model entries (R7, R8).
+//! - [`filter`]:   selective-censoring rules over the taxonomy (R3).
+//! - [`censor`]:   box censor styles and per-part overrides (R4).
+//! - [`profile`]:  the serializable "what and how" job profile.
+//! - [`version`]:  the build's version and commit, for `--version`.
 
 pub mod cancel;
 pub mod censor;

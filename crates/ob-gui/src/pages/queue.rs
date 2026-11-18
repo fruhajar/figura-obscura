@@ -36,8 +36,11 @@ fn tab_bar(app: &mut ObApp, ui: &mut egui::Ui) {
                 }
                 _ => String::new(),
             };
-            let label = RichText::new(format!("{}{badge}", tab.label()))
-                .color(if selected { p.on_accent } else { p.text_dim });
+            let label = RichText::new(format!("{}{badge}", tab.label())).color(if selected {
+                p.on_accent
+            } else {
+                p.text_dim
+            });
             let button = egui::Button::new(label)
                 .fill(if selected { p.accent } else { p.card })
                 .stroke(egui::Stroke::new(1.0_f32, p.stroke))
@@ -56,7 +59,11 @@ fn tab_bar(app: &mut ObApp, ui: &mut egui::Ui) {
                     egui::Checkbox::new(&mut review_mode, "Review before writing"),
                 )
                 .on_hover_text(
-                    "Run the detector over the whole batch first and stop here, so                      you can correct what it found before any file is written.                      Costs a second pass over the pixels, and the batch does not                      finish on its own — you press Write when it looks right.",
+                    "Run the detector over the whole batch first and stop \
+                     here, so you can correct what it found before any file is \
+                     written. Costs a second pass over the pixels, and the \
+                     batch does not finish on its own: you press Write when it \
+                     looks right.",
                 )
                 .changed()
             {
@@ -91,7 +98,7 @@ fn queue_body(app: &mut ObApp, ui: &mut egui::Ui) {
 /// number someone uses to decide whether to start it now or leave it overnight.
 /// Until a run has been measured on this machine the figure rests on a built-in
 /// guess at inference speed, which varies by two orders of magnitude across
-/// hardware — so say so rather than presenting a guess as a measurement.
+/// hardware, so say so rather than presenting a guess as a measurement.
 fn estimate_line(app: &ObApp, ui: &mut egui::Ui) {
     if app.inputs.is_empty() || app.is_running() {
         return;
@@ -118,9 +125,9 @@ fn estimate_line(app: &ObApp, ui: &mut egui::Ui) {
     let cal = app.calibration();
     let eta = crate::downloads::human_eta(cal.secs_for(w.total_work));
     let text = if cal.is_measured() {
-        format!("{what} — about {eta} at this machine's last measured speed")
+        format!("{what}: about {eta} at this machine's last measured speed")
     } else {
-        format!("{what} — roughly {eta}, until a run has been timed here")
+        format!("{what}: roughly {eta}, until a run has been timed here")
     };
     ui.label(RichText::new(text).size(12.0).color(p.text_dim));
 
@@ -130,7 +137,7 @@ fn estimate_line(app: &ObApp, ui: &mut egui::Ui) {
         theme::hint(
             ui,
             &format!(
-                "Plus {} video(s) whose length could not be read — not included above.",
+                "Plus {} video(s) whose length could not be read, not included above.",
                 w.unknown
             ),
         );
@@ -377,7 +384,7 @@ fn log_section(app: &mut ObApp, ui: &mut egui::Ui) {
                 }
                 ui.label(
                     RichText::new(if f.cancelled {
-                        format!("stopped — {} written", f.ok)
+                        format!("stopped, {} written", f.ok)
                     } else {
                         format!("{} written, {} failed", f.ok, f.failed)
                     })

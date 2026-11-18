@@ -36,7 +36,7 @@ pub trait Detector: Send + Sync {
     /// leaves most of the available work on the floor: each pass pays the full
     /// per-run overhead on an input too small to spread across a modern core
     /// count. An implementation backed by a graph with a dynamic batch axis can
-    /// answer the whole grid in one run — see [`session::OnnxDetector`].
+    /// answer the whole grid in one run. See [`session::OnnxDetector`].
     ///
     /// The default implementation is exactly the loop this replaced: crop each
     /// window, detect, offset the results. Every existing detector and test
@@ -78,14 +78,14 @@ pub trait Detector: Send + Sync {
 
     /// Whether this detector is *capable* of emitting `category` at all.
     ///
-    /// Not "did it find one" — "could it ever". A model's [`LabelMap`] fixes
+    /// Not "did it find one" but "could it ever". A model's [`LabelMap`] fixes
     /// this: the three-class anime detectors can never report buttocks, and a
     /// hypothetical nipple specialist can never report anything else.
     ///
     /// [`crate::ensemble::EnsembleDetector`] needs this to count votes fairly.
     /// Counting a consensus threshold against members that are structurally
     /// unable to vote means adding a specialist *removes* every category
-    /// outside its competence — see the tests there.
+    /// outside its competence. See the tests there.
     ///
     /// Defaults to `true` so a detector that does not declare its capabilities
     /// keeps today's behaviour and is simply always eligible.
@@ -97,7 +97,8 @@ pub trait Detector: Send + Sync {
 
     /// The execution provider this detector's ONNX session actually got.
     ///
-    /// Not what was *asked for* — what ONNX Runtime returned. A CUDA build on a
+    /// Not what was *asked for*, but what ONNX Runtime returned. A CUDA build
+    /// on a
     /// machine with no usable driver silently runs on CPU, and until this was
     /// reportable the only symptom was a slow run at a few percent GPU load.
     ///
@@ -121,7 +122,7 @@ pub enum ExecProvider {
 }
 
 impl ExecProvider {
-    /// ONNX Runtime's own identifier for this provider — the exact string it
+    /// ONNX Runtime's own identifier for this provider: the exact string it
     /// reports from `GetAvailableProviders`, which is how [`session`] decides
     /// whether the linked runtime can actually offer it.
     pub fn name(self) -> &'static str {
@@ -165,7 +166,7 @@ impl std::fmt::Display for ExecProvider {
 /// included when their Cargo feature is enabled.
 ///
 /// This must stay in step with `session::execution_provider_dispatches`, which
-/// is gated on the same features in the same order — this list is what the
+/// is gated on the same features in the same order. This list is what the
 /// binary *reports* about itself, so a provider missing here (as `webgpu` was)
 /// makes a working GPU build describe itself as CPU-only.
 // Not a `vec![]` literal: each element is `#[cfg]`-gated, and on a build where

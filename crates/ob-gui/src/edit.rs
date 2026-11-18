@@ -1,7 +1,8 @@
 //! The manual editor's document: hand-drawn censor boxes, their undo history,
 //! and the geometry that maps them onto the canvas.
 //!
-//! Everything in here is pure — no egui context, no I/O, no inference — so the
+//! Everything in here is pure, with no egui context, no I/O and no inference,
+//! so the
 //! parts that are easy to get subtly wrong are unit-testable in a container
 //! with no display server: what counts as *one* undo step, where a corner
 //! handle sits, and what a drag that leaves the frame means.
@@ -35,7 +36,7 @@ pub const HANDLE_PX: f32 = 9.0;
 /// the box body.
 ///
 /// Deliberately wider than the handle is drawn. Pressing near a corner is
-/// almost always an attempt to resize — that is what corners are for — so the
+/// almost always an attempt to resize, which is what corners are for, so the
 /// target is the one worth being generous with, and asking for pixel precision
 /// to hit a 9px square is the kind of thing that makes a tool feel stiff. The
 /// cost of being wrong is small: a press meant as a move, a few pixels inside a
@@ -44,8 +45,9 @@ pub const GRAB_PX: f32 = 18.0;
 
 /// A box's corner zones never take more than this share of its shorter side.
 ///
-/// Without it, [`GRAB_PX`] would swallow a small box whole — every point in a
-/// 30px box is within 18px of some corner — and it could then be resized but
+/// Without it, [`GRAB_PX`] would swallow a small box whole, since every point
+/// in a 30px box is within 18px of some corner, and it could then be resized
+/// but
 /// never moved.
 const GRAB_SHARE: f32 = 1.0 / 3.0;
 
@@ -74,7 +76,8 @@ pub struct ManualBox {
     /// a slider that silently reshaped every box already drawn was the odd one
     /// out among controls that all act on the selection.
     pub rounding: f32,
-    /// Hidden boxes stay in the list but are not drawn — a layer's eye. Kept
+    /// Hidden boxes stay in the list but are not drawn, like a layer's eye.
+    /// Kept
     /// rather than deleted so a style can be compared against the original
     /// without losing the box.
     pub visible: bool,
@@ -87,8 +90,9 @@ pub struct ManualBox {
     /// The confidence the detector reported, carried so a review can show it
     /// and so writing a box back out is lossless.
     ///
-    /// Nothing downstream acts on it — the category filter has already run by
-    /// the time a review exists — but a box that came back from the canvas with
+    /// Nothing downstream acts on it, because the category filter has already
+    /// run by the time a review exists. But a box that came back from the
+    /// canvas with
     /// a different score than it went in with would make every file the user
     /// merely *looked at* register as edited.
     pub score: f32,
@@ -110,7 +114,7 @@ impl ManualBox {
     /// The box as a detection, for writing a review back out.
     ///
     /// A drawn box has no category, so it takes the one `ob-job` reserves for
-    /// exactly that — see [`ob_job::review::MANUAL`].
+    /// exactly that. See [`ob_job::review::MANUAL`].
     pub fn as_detection(&self) -> Detection {
         Detection {
             bbox: self.rect,
@@ -201,8 +205,8 @@ impl History {
         &mut self.current
     }
 
-    /// Begin a change that is part of a continuous gesture — a drag, a slider
-    /// sweep — identified by `key`.
+    /// Begin a change that is part of a continuous gesture (a drag, a slider
+    /// sweep), identified by `key`.
     ///
     /// Consecutive calls with the same key fold into the step the first one
     /// opened, so the whole gesture undoes at once.
@@ -255,7 +259,7 @@ impl History {
         true
     }
 
-    /// Replace the document and forget the history — a different image.
+    /// Replace the document and forget the history, for a different image.
     pub fn reset(&mut self, doc: EditDoc) {
         self.current = doc;
         self.past.clear();
@@ -358,7 +362,7 @@ pub enum Drag {
     /// were when the gesture began, so the result is always computed from the
     /// press position rather than accumulated frame by frame.
     ///
-    /// A move carries the whole selection — grabbing one of several selected
+    /// A move carries the whole selection. Grabbing one of several selected
     /// boxes and having the others stay behind would make the selection look
     /// like it had been forgotten. A resize carries only `id`: there is no one
     /// obvious thing "resize these four" should mean.
@@ -377,7 +381,7 @@ pub enum Drag {
 /// containing the point is moved. `None` means empty canvas: draw a new box
 /// there.
 ///
-/// `grab` is the corner radius in image pixels — see [`View::grab_in_image`].
+/// `grab` is the corner radius in image pixels. See [`View::grab_in_image`].
 pub fn hit(doc: &EditDoc, p: Pos2, selected: &[u64], grab: f32) -> Option<(u64, Grab)> {
     // Topmost first among the selected, so stacked selected boxes resolve the
     // same way bodies do.
@@ -510,7 +514,7 @@ fn clamped(b: BBox, img: Vec2) -> BBox {
 /// Draw every visible box over a copy of `source`.
 ///
 /// Each box carries its own style, so each is a separate `ob_censor::apply`
-/// call with that style as the default and no per-part overrides — the
+/// call with that style as the default and no per-part overrides, because the
 /// taxonomy does not apply to a region someone drew by hand. Padding is zero,
 /// unlike the batch default: the box *is* what the user drew, and quietly
 /// growing it by 10% would make the drawn outline a lie.
@@ -533,8 +537,8 @@ pub fn render(source: &Frame, doc: &EditDoc) -> Result<Frame, CensorError> {
 /// Dress a hand-drawn rectangle up as a detection so the shared censor path can
 /// take it.
 ///
-/// The category is never consulted here — `per_part` is empty in [`render`], so
-/// `style_for` falls through to the default every time — but one has to be
+/// The category is never consulted here: `per_part` is empty in [`render`], so
+/// `style_for` falls through to the default every time. But one has to be
 /// supplied, and it is the same sentinel a review uses, so the two mean the
 /// same thing by "nobody classified this".
 fn manual_detection(rect: BBox) -> Detection {
@@ -557,14 +561,14 @@ pub fn style_name(s: &CensorStyle) -> &'static str {
 
 /// What the canvas is being used for, which decides how its boxes are drawn.
 ///
-/// The interaction is identical either way — the same drag, resize, select,
-/// undo — and that is the point of having one canvas. What differs is where
+/// The interaction is identical either way, the same drag, resize, select and
+/// undo, and that is the point of having one canvas. What differs is where
 /// appearance comes from, and it has to differ, because the two jobs mean
 /// different things by a rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CanvasMode {
     /// A document someone is censoring by hand. Each box carries its own style,
-    /// and the rectangle drawn is exactly the area covered — no padding, or the
+    /// and the rectangle drawn is exactly the area covered, no padding, or the
     /// outline would be a lie about what was about to happen.
     #[default]
     Manual,
@@ -721,7 +725,7 @@ impl EditorState {
         self.selection.last().and_then(|id| self.doc().find(*id))
     }
 
-    /// Where every selected box is now — the starting point of a group move.
+    /// Where every selected box is now, the starting point of a group move.
     pub fn selected_rects(&self) -> Vec<(u64, BBox)> {
         let doc = self.doc();
         self.selection
@@ -738,7 +742,7 @@ impl EditorState {
         }
     }
 
-    /// Add a box to the selection, or take it out — what Ctrl-click does.
+    /// Add a box to the selection, or take it out. What Ctrl-click does.
     ///
     /// Re-picking moves it to the end, so the controls follow the box just
     /// clicked rather than the one picked first.
@@ -1111,7 +1115,7 @@ mod tests {
         // past the 9px handle as drawn, is still a resize. Pressing near a
         // corner is what someone does when they want to resize.
         let doc = doc_with(&[BBox::new(0.0, 0.0, 200.0, 200.0)]);
-        // Past the 9px the handle is drawn at — which is the point, and which
+        // Past the 9px the handle is drawn at, which is the point, and which
         // fails if `GRAB_PX` is ever brought back down to the handle's size.
         let just_inside = pos2(14.0, 14.0);
         assert_eq!(
@@ -1279,7 +1283,7 @@ mod tests {
             [f.data[i], f.data[i + 1], f.data[i + 2]]
         };
         assert_eq!(px(&out, 12, 12), [255, 0, 0]);
-        // Outside the box, untouched — no padding is applied to a hand-drawn
+        // Outside the box, untouched: no padding is applied to a hand-drawn
         // region.
         assert_eq!(px(&out, 6, 6), px(&src, 6, 6));
         assert_eq!(px(&out, 30, 30), px(&src, 30, 30));

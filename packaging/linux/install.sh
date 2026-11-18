@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Figura Obscura installer for the Linux tarball.
 #
-# Installs to ~/.local by default — no root, no package manager, and it lands in
+# Installs to ~/.local by default: no root, no package manager, and it lands in
 # the XDG directories a desktop session already searches. Pass --prefix to put
 # it somewhere else, or --uninstall to take it away again.
 set -euo pipefail

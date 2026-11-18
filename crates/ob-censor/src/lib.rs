@@ -46,8 +46,8 @@ impl Rect {
 /// `selected` are the detections the filter already chose (see
 /// `ob_core::filter`). Region padding/rounding from `cfg.shape` is applied here.
 ///
-/// Policy resolution and drawing are two steps — [`CensorConfig::resolve`] then
-/// [`apply_boxes`] — rather than one loop that does both. They have to be
+/// Policy resolution and drawing are two steps, [`CensorConfig::resolve`] then
+/// [`apply_boxes`], rather than one loop that does both. They have to be
 /// separable because review hands a user the resolved boxes, lets them move
 /// them, and then draws *those*; if this function resolved policy privately,
 /// the reviewed boxes and the written pixels would be two independent
@@ -108,7 +108,7 @@ fn copy_rect(frame: &Frame, r: &Rect) -> Vec<u8> {
 /// rounded-rectangle boundary, giving the censored box rounded corners.
 ///
 /// `rounding` is the corner radius as a fraction of the region's shorter side
-/// (0.5 makes the shorter axis a full semicircle — a stadium shape). `orig` is
+/// (0.5 makes the shorter axis a full semicircle, a stadium shape). `orig` is
 /// the packed snapshot from [`copy_rect`] for the same rectangle.
 fn round_corners(frame: &mut Frame, r: &Rect, orig: &[u8], rounding: f32) {
     let w = frame.width as usize;
@@ -185,7 +185,7 @@ fn solid_fill(frame: &mut Frame, r: &Rect, color: [u8; 4]) {
 ///
 /// Both halves walk the cell as row slices rather than recomputing
 /// `(y * w + x) * 3` per pixel per channel. The sums stay `u64` and are taken
-/// in the same order as before, so the averages — and therefore the output —
+/// in the same order as before, so the averages, and therefore the output,
 /// are unchanged.
 fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
     let w = frame.width as usize;
@@ -360,7 +360,7 @@ mod tests {
     /// can be held to producing identical bytes rather than plausible ones.
     ///
     /// Lints are off here on purpose: the value of this module is that it is a
-    /// transcription. Tidying it — even in ways clippy is right about — would
+    /// transcription. Tidying it, even in ways clippy is right about, would
     /// make it evidence of what someone rewrote rather than of what shipped.
     #[allow(clippy::all)]
     mod reference {
@@ -476,8 +476,8 @@ mod tests {
 
     #[test]
     fn the_rewritten_fills_are_byte_for_byte_the_old_ones() {
-        // These are pure speed rewrites — row slices instead of three indexed
-        // writes per pixel — so anything but exact agreement is a bug.
+        // These are pure speed rewrites, row slices instead of three indexed
+        // writes per pixel, so anything but exact agreement is a bug.
         for (i, r) in random_rects(0x5eed_1234, 40).into_iter().enumerate() {
             let base = noisy(96, 72, 0xabcd_0000 + i as u64);
 
@@ -504,7 +504,7 @@ mod tests {
     fn restricting_rounding_to_the_corners_restores_exactly_the_same_pixels() {
         // The rewrite skips the interior on the argument that the arc-centre
         // snap makes the distance zero there. That argument is what this test
-        // exists to check — if it is wrong anywhere, the interior of a censor
+        // exists to check. If it is wrong anywhere, the interior of a censor
         // box gets its original pixels back, which is a leak.
         for (i, r) in random_rects(0xfeed_9876, 40).into_iter().enumerate() {
             for rounding in [0.05f32, 0.2, 0.35, 0.5] {

@@ -91,8 +91,8 @@ impl Default for CensorConfig {
 /// already padded, and the style already resolved.
 ///
 /// This is the hand-off between deciding what to censor and doing it. A
-/// `Detection` still needs a policy applied to it — which style, how much
-/// padding — and two code paths applying that policy separately is how a
+/// `Detection` still needs a policy applied to it (which style, how much
+/// padding) and two code paths applying that policy separately is how a
 /// preview comes to disagree with the file it claims to preview. A `CensorBox`
 /// has no policy left in it, so anything holding one draws the same pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -107,7 +107,7 @@ pub struct CensorBox {
     /// Kept for two things that happen after resolution: replaying a video's
     /// tracker at commit, which matches boxes within a category, and telling
     /// the user in a review what the model thought it found. `None` for a box
-    /// drawn by hand, which belongs to no taxonomy — and which must therefore
+    /// drawn by hand, which belongs to no taxonomy and must therefore
     /// never be matched against a detected one.
     #[serde(default)]
     pub category: Option<Category>,

@@ -3,7 +3,7 @@
 //! A batch over a folder of video can run for hours, and a model download over
 //! a slow link for minutes. Both need a way for the UI to ask them to stop that
 //! does not involve killing a thread mid-write. [`CancelToken`] is that: a
-//! cheap, clonable flag polled at the points where stopping is safe — between
+//! cheap, clonable flag polled at the points where stopping is safe: between
 //! files, between frames, between download chunks.
 //!
 //! It is deliberately one-way. Once cancelled a token stays cancelled, so

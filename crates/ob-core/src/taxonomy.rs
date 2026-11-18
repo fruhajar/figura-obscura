@@ -30,7 +30,7 @@ pub enum Part {
     Belly,
     Armpits,
     Face,
-    /// Derived in v1 from the top strip of a `Face` region — no detector class.
+    /// Derived in v1 from the top strip of a `Face` region, no detector class.
     Eyes,
 }
 
@@ -124,7 +124,7 @@ pub mod cat {
     /// A region nobody classified: a box drawn by hand in the editor or during
     /// a review.
     ///
-    /// Not a real category, and not one any detector emits — `Face` is only
+    /// Not a real category, and not one any detector emits. `Face` is only
     /// ever reported `Exposed`, and the anime models report no faces at all.
     /// A value is needed because [`Detection`](crate::geometry::Detection)
     /// requires one and because a video's tracker matches boxes *within* a

@@ -6,7 +6,7 @@ travel with the binaries.
 
 ## Bundled binaries
 
-### FFmpeg — <https://ffmpeg.org>
+### FFmpeg, <https://ffmpeg.org>
 
 Used for video decoding and encoding (`ob-media`).
 
@@ -21,7 +21,7 @@ That leaves four supportable options:
 
 | Option | Obligation | Trade-off |
 |---|---|---|
-| **Don't bundle** — use the user's ffmpeg | **None at all** | User must install ffmpeg for video; images work regardless |
+| **Don't bundle**, use the user's ffmpeg | **None at all** | User must install ffmpeg for video; images work regardless |
 | **Bundle LGPL-2.1** *(default)* | Ship the licence text; offer the corresponding source; keep it replaceable | Needs an LGPL build, which is less commonly prebuilt |
 | **Bundle GPL** (`--allow-gpl`) | Ship the licence text; offer the corresponding source for that exact build | Easiest binaries to obtain; strongest source obligation |
 | **Bundle `--enable-nonfree`** | **Not redistributable by anyone** | Never do this |
@@ -30,7 +30,7 @@ That leaves four supportable options:
 an explicit `--allow-gpl`, LGPL passes. Omitting `--ffmpeg` from the staging step
 selects the first row.
 
-Whichever is chosen, Obscura keeps FFmpeg **separately replaceable** — a user can
+Whichever is chosen, Obscura keeps FFmpeg **separately replaceable**. A user can
 substitute their own build, and `OBSCURA_FFMPEG`/`OBSCURA_FFPROBE` exist to make that
 explicit. That is an LGPL requirement and good practice besides.
 
@@ -43,7 +43,7 @@ build time**, while you still know.
 > ignored at small scale, but it is a distinct question from the one above and
 > worth a look if volume grows.
 
-### ONNX Runtime — <https://onnxruntime.ai> (MIT)
+### ONNX Runtime, <https://onnxruntime.ai> (MIT)
 
 Model inference. The CPU build is **statically linked** into `obscura` and `obscura-gui`,
 so nothing extra ships for the default build. GPU builds additionally emit
@@ -52,7 +52,7 @@ present.
 
 ## Detector models (downloaded, not bundled)
 
-Weights are fetched on first run, not shipped in the installer — they are large,
+Weights are fetched on first run, not shipped in the installer. They are large,
 they update independently, and the licences below travel with them.
 
 | Model | Licence | Source |

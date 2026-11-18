@@ -30,7 +30,7 @@ pub struct Palette {
     pub card: Color32,
     /// A card under the pointer.
     pub card_hover: Color32,
-    /// Slider rails, checkbox boxes, progress-bar troughs — anything that must
+    /// Slider rails, checkbox boxes, progress-bar troughs: anything that must
     /// stay visible *on top of* a card.
     pub track: Color32,
     pub track_hover: Color32,
@@ -44,7 +44,8 @@ pub struct Palette {
     pub text_dim: Color32,
     /// Tertiary text: placeholders, disabled labels.
     pub text_faint: Color32,
-    /// The brand colour. Primary actions and selection only — if everything is
+    /// The brand colour. Primary actions and selection only, because if
+    /// everything is
     /// accented, nothing is.
     pub accent: Color32,
     pub accent_hover: Color32,
@@ -172,7 +173,7 @@ const ACCENTS: [AccentSpec; 6] = [
         dark: AccentColors {
             accent: rgb(0x7C, 0x6C, 0xFF),
             // Was 0x9385FF, which put the primary button's own label at 2.78:1
-            // against it — below the 3:1 floor, and only on hover, which is why
+            // against it, below the 3:1 floor, and only on hover, which is why
             // it survived to 0.6.0 unnoticed. This is as light as the hover can
             // go and still carry `PAPER` text.
             hover: rgb(0x88, 0x78, 0xFF),
@@ -297,7 +298,7 @@ impl Accent {
     }
 
     /// The accent colour as the given mode renders it, for the swatch row on
-    /// the Settings page — which has to draw the colours of a scheme that is
+    /// the Settings page, which has to draw the colours of a scheme that is
     /// not the one currently in force.
     pub fn swatch(self, dark: bool) -> Color32 {
         let spec = &ACCENTS[self.index()];
@@ -359,7 +360,8 @@ fn palettes() -> &'static [Palette] {
     })
 }
 
-/// Index into [`palettes`] of the scheme in force. Zero — violet dark — until
+/// Index into [`palettes`] of the scheme in force. Zero, meaning violet dark,
+/// until
 /// the app reads the saved preference.
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
@@ -382,7 +384,7 @@ pub fn palette() -> &'static Palette {
 /// Corner radius for interactive widgets.
 ///
 /// Kept small on purpose. egui applies this to *every* widget including
-/// checkboxes, and at 7px a 14px checkbox comes out perfectly circular — which
+/// checkboxes, and at 7px a 14px checkbox comes out perfectly circular, which
 /// reads as a radio button, i.e. as a mutually exclusive choice. 4px is
 /// unambiguously a rounded square at that size and still soft on a 30px button.
 pub const RADIUS: f32 = 4.0;
@@ -535,7 +537,7 @@ pub fn install(ctx: &egui::Context) {
     // `bg_fill` is the *track* colour: egui paints slider rails, checkbox boxes
     // and radio dots with it, while buttons use `weak_bg_fill`. Leaving both at
     // the card colour made every slider rail invisible against the card it sat
-    // on — the handle appeared to float in empty space.
+    // on, and the handle appeared to float in empty space.
     v.widgets.inactive.bg_fill = p.track;
     v.widgets.inactive.weak_bg_fill = p.card;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.stroke);
@@ -551,7 +553,7 @@ pub fn install(ctx: &egui::Context) {
 
     // The pressed state carries two jobs egui does not separate: it is what a
     // held-down widget looks like, and `fg_stroke` here is *also* where egui
-    // takes the colour of every `RichText::strong()` in the program from —
+    // takes the colour of every `RichText::strong()` in the program from;
     // `override_text_color` does not reach it. Setting it to `on_accent`, as
     // this did, meant every bold label in the app was drawn in the colour meant
     // for text sitting on an accent fill. On the dark scheme those were both
@@ -559,7 +561,7 @@ pub fn install(ctx: &egui::Context) {
     // white card.
     //
     // So `fg_stroke` is plain body text, and the fill becomes the accent mixed
-    // into the card rather than the accent itself — still unmistakably a press,
+    // into the card rather than the accent itself. Still unmistakably a press,
     // still something body text can be read on. `pressed_fill_carries_body_text`
     // pins that for every scheme.
     let pressed = mix(p.card, p.accent, if p.is_dark { 0.38 } else { 0.22 });
@@ -588,7 +590,7 @@ pub fn install(ctx: &egui::Context) {
 // Shared drawing helpers
 // ---------------------------------------------------------------------------
 
-/// A small uppercase section label — the app's one piece of typographic
+/// A small uppercase section label, the app's one piece of typographic
 /// texture, used to break long settings columns into scannable groups.
 pub fn section(ui: &mut egui::Ui, text: &str) {
     ui.add_space(10.0);
@@ -696,7 +698,7 @@ pub fn danger_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Resp
 ///
 /// Three things in this program are global and are read while the UI draws: the
 /// active scheme here, and `OBSCURA_CONFIG_DIR`/`OBSCURA_MODEL_DIR`. Tests run
-/// in parallel threads, so one lock covers all of them — one rather than three,
+/// in parallel threads, so one lock covers all of them. One rather than three,
 /// because three locks acquired in two different orders is a deadlock waiting
 /// to be written.
 #[cfg(test)]
@@ -783,7 +785,7 @@ mod tests {
     fn body_text_is_readable_on_every_surface_of_every_scheme() {
         // 4.5:1 is WCAG AA for body text. The app's body size is 14px, which is
         // not "large text" under any reading of the spec, so this is the bar
-        // that applies — and the reason a light scheme needed its own neutrals
+        // that applies, and the reason a light scheme needed its own neutrals
         // rather than the dark ones inverted.
         for (name, p) in all_schemes() {
             for (surface, bg) in [("bg", p.bg), ("panel", p.panel), ("card", p.card)] {
@@ -864,7 +866,7 @@ mod tests {
     fn control_tracks_are_distinct_from_the_cards_they_sit_on_in_every_scheme() {
         // Slider rails, checkbox boxes and progress troughs are painted with
         // `track`. When it equals the card colour every rail vanishes and the
-        // handle appears to float in empty space — which is what happened once
+        // handle appears to float in empty space, which is what happened once
         // already, in the only scheme that existed then.
         for (name, p) in all_schemes() {
             assert_ne!(p.track, p.card, "{name}: slider rails would be invisible");
@@ -887,8 +889,8 @@ mod tests {
 
     #[test]
     fn installing_a_light_scheme_tells_egui_it_is_light() {
-        // egui paints a handful of things itself from `dark_mode` — the text
-        // cursor and the resize handles among them — so leaving it hard-coded
+        // egui paints a handful of things itself from `dark_mode`, the text
+        // cursor and the resize handles among them, so leaving it hard-coded
         // would put dark-theme chrome on a light window.
         let _g = with_scheme(Accent::Violet, false);
         let ctx = egui::Context::default();
@@ -902,7 +904,7 @@ mod tests {
     #[test]
     fn pressed_fill_carries_body_text() {
         // egui draws every `strong()` label in `widgets.active.fg_stroke`, so
-        // that colour has to be ordinary body text — which in turn means the
+        // that colour has to be ordinary body text, which in turn means the
         // pressed fill underneath it has to be something body text reads on.
         for (name, p) in all_schemes() {
             let ctx = egui::Context::default();
@@ -1004,7 +1006,7 @@ mod tests {
     #[test]
     fn checkboxes_cannot_come_out_circular() {
         // egui applies the widget radius to checkboxes too. At a radius of half
-        // the ~14px box they become circles, which reads as a radio button —
+        // the ~14px box they become circles, which reads as a radio button:
         // a mutually exclusive choice, which none of these are.
         assert!(
             RADIUS < 7.0,

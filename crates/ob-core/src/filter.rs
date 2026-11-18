@@ -117,8 +117,8 @@ impl FilterSet {
 
     /// As [`FilterSet::select_all`], but yielding owned detections.
     ///
-    /// Every caller in the pipeline wants owned values — a `Detection` is four
-    /// floats and two small enums, so borrowing buys nothing — and reaching
+    /// Every caller in the pipeline wants owned values, since a `Detection` is
+    /// four floats and two small enums and borrowing buys nothing, and reaching
     /// them through `select_all(..).into_iter().copied().collect()` allocated
     /// twice per frame. On video that is two allocations per frame for the
     /// length of the clip.

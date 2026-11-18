@@ -1,4 +1,4 @@
-//! `ob-gui` — the Figura Obscura desktop application.
+//! `ob-gui`, the Figura Obscura desktop application.
 //!
 //! On Windows this is a GUI-subsystem binary (see the `windows_subsystem`
 //! attribute) so launching it from a shortcut does not also open a console
@@ -34,7 +34,7 @@ fn main() -> eframe::Result<()> {
     {
         // Hand-rolled rather than pulling clap into the GUI for one flag. On
         // Windows this is a GUI-subsystem binary with no console attached, so
-        // nothing appears there — the About page carries the same string.
+        // nothing appears there, so the About page carries the same string.
         println!("obscura-gui {}", ob_core::version::LONG);
         // Which providers this build has, for the same reason the CLI prints
         // them: a CPU-only build and a GPU one are otherwise identical from the

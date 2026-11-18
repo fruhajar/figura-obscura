@@ -50,7 +50,8 @@ impl ModelError {
     ///
     /// Only transport failures are retried. A checksum mismatch, an HTML page
     /// where a model should be, or a missing URL will fail identically every
-    /// time — retrying those just multiplies the wait before the user sees the
+    /// time, and retrying those just multiplies the wait before the user sees
+    /// the
     /// real problem.
     pub fn is_transient(&self) -> bool {
         matches!(self, ModelError::Download(..) | ModelError::Io(_))
@@ -133,7 +134,7 @@ pub fn verify(entry: &ModelEntry) -> Result<bool, ModelError> {
 /// How far along a download is.
 ///
 /// `total` is `None` until the server reports a `Content-Length`, and stays
-/// `None` for chunked responses — a progress UI must handle an unknown total
+/// `None` for chunked responses, so a progress UI must handle an unknown total
 /// (show bytes so far and a spinner) rather than assume a percentage exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DownloadProgress {
@@ -152,7 +153,7 @@ impl DownloadProgress {
     }
 }
 
-/// What a fetch actually did — the caller reports "already installed" very
+/// What a fetch actually did. The caller reports "already installed" very
 /// differently from "downloaded 44 MB".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchOutcome {
@@ -219,7 +220,7 @@ impl<'a> FetchOptions<'a> {
 /// Identify Obscura to the model hosts.
 ///
 /// HuggingFace and GitHub both treat an absent User-Agent as a bot signal and
-/// may answer with a challenge page rather than the file — which Obscura would then
+/// may answer with a challenge page rather than the file, which Obscura would then
 /// correctly reject as "not a model", leaving the user with a puzzling error
 /// for what is really a missing header.
 fn user_agent() -> String {
@@ -328,7 +329,7 @@ fn download_once(
     // An intercepted download (captive portal, proxy, expired release asset)
     // commonly answers 200 with an HTML page. Committing that as a `.onnx`
     // fails much later with a confusing inference error, and an unpinned
-    // checksum won't catch it — so sniff the payload before committing.
+    // checksum won't catch it, so sniff the payload before committing.
     if let Err(reason) = looks_like_onnx(&tmp) {
         let _ = fs::remove_file(&tmp);
         return Err(ModelError::NotAModel {
@@ -431,8 +432,8 @@ impl ModelStatus {
 /// Inspect a model's local state without touching the network.
 ///
 /// A checksum *mismatch* is reported as `Missing` rather than an error: to the
-/// user a corrupt file is simply not a usable model, and the fix — download it
-/// again — is the same one the missing case offers.
+/// user a corrupt file is simply not a usable model, and the fix, downloading
+/// it again, is the same one the missing case offers.
 pub fn status(entry: &ModelEntry) -> ModelStatus {
     let Ok(path) = model_path(entry) else {
         return ModelStatus::Missing;
@@ -465,7 +466,7 @@ pub fn remove(entry: &ModelEntry) -> Result<(), ModelError> {
 /// Cheap sanity check that a downloaded file is really an ONNX model.
 ///
 /// ONNX is protobuf: a `ModelProto` starts with field 1 (`ir_version`), i.e. a
-/// `0x08` tag byte. We don't parse the graph — we only reject the payloads that
+/// `0x08` tag byte. We don't parse the graph, only reject the payloads that
 /// actually show up in practice (HTML sign-in/error pages and empty bodies), so
 /// a valid-but-unusual model is never turned away.
 fn looks_like_onnx(path: &std::path::Path) -> Result<(), String> {
@@ -559,7 +560,7 @@ mod tests {
     /// real cached model or another test.
     ///
     /// The checksum is cleared explicitly. Tests must not inherit whether a
-    /// shipped entry happens to be pinned — that is a fact about the registry
+    /// shipped entry happens to be pinned. That is a fact about the registry
     /// that changes over time (and did: pinning `nudenet-320n` silently broke
     /// this fixture). A test that cares about pinning sets `sha256` itself.
     fn test_entry(id: &'static str) -> ModelEntry {

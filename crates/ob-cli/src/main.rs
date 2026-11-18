@@ -1,8 +1,8 @@
-//! `obscura` — the Figura Obscura command-line interface.
+//! `obscura`, the Figura Obscura command-line interface.
 //!
 //! The CLI is a thin front-end over `ob-job`: it builds a [`Profile`], resolves
 //! the chosen model + its per-model settings (validated against the registry
-//! metadata, so tooltips/ranges live in one place — R7), constructs the ONNX
+//! metadata, so tooltips and ranges live in one place, R7), constructs the ONNX
 //! detector, and runs the batch engine.
 
 use anyhow::{bail, Context, Result};
@@ -24,7 +24,7 @@ use std::path::PathBuf;
 /// `--version` in full: build identity, then what it can run the model on.
 ///
 /// Built once into a `OnceLock` because clap's `Str` borrows for `'static`, and
-/// the provider list is only knowable at runtime — it depends on what the
+/// the provider list is only knowable at runtime: it depends on what the
 /// linked ONNX Runtime turns out to contain, not just on the Cargo features.
 fn long_version() -> &'static str {
     static LONG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -73,13 +73,13 @@ fn report_execution_provider(detector: &dyn Detector) {
 #[derive(Parser)]
 #[command(
     name = "obscura",
-    about = "Figura Obscura — offline batch censoring for images and video",
+    about = "Figura Obscura: offline batch censoring for images and video",
     // Version *and* commit: a bug report that says `0.4.2` cannot tell a build
     // from before a fix apart from one after it.
     version = ob_core::version::LONG,
     // `--version` additionally names the execution providers, because a
     // CPU-only build and a CUDA one are otherwise indistinguishable from the
-    // outside — same name, same version string, same commit — and the only
+    // outside (same name, same version string, same commit), and the only
     // symptom of running the wrong one is that the job is slow.
     long_version = long_version()
 )]
@@ -171,7 +171,7 @@ struct ProcessArgs {
     ///
     /// The way to answer "is this model actually finding things on *my*
     /// material": combine with --dry-run to audit a folder without writing any
-    /// output. Files with 0 regions are the ones to look at by eye — they are
+    /// output. Files with 0 regions are the ones to look at by eye: they are
     /// either clean or a miss, and only you can tell which.
     #[arg(long, value_name = "FILE")]
     report: Option<PathBuf>,
@@ -188,7 +188,7 @@ struct SetupArgs {
     /// Re-download models that are already present.
     #[arg(long)]
     force: bool,
-    /// No progress bars — for installer logs and CI.
+    /// No progress bars, for installer logs and CI.
     #[arg(long)]
     quiet: bool,
 }
@@ -316,11 +316,11 @@ fn fetch_one(entry: &ModelEntry, force: bool, quiet: bool) -> Result<FetchOutcom
 fn report_outcome(entry: &ModelEntry, outcome: &FetchOutcome) {
     match outcome {
         FetchOutcome::AlreadyPresent(p) => {
-            println!("  {} — already installed ({})", entry.id, p.display());
+            println!("  {}: already installed ({})", entry.id, p.display());
         }
         FetchOutcome::Downloaded { path, bytes } => {
             println!(
-                "  {} — downloaded {} to {}",
+                "  {}: downloaded {} to {}",
                 entry.id,
                 human_bytes(*bytes),
                 path.display()
@@ -332,7 +332,7 @@ fn report_outcome(entry: &ModelEntry, outcome: &FetchOutcome) {
                     println!("    sha256 = {sum}");
                     if entry.sha256.is_empty() || entry.sha256 == "TODO" {
                         println!(
-                            "    (not pinned in registry — set sha256 for `{}` to enable verification)",
+                            "    (not pinned in registry; set sha256 for `{}` to enable verification)",
                             entry.id
                         );
                     }
@@ -360,10 +360,10 @@ fn build_detector(
         ModelStatus::Installed { .. } => ob_models::require(&entry)?,
         ModelStatus::Missing if auto_fetch => {
             // Downloading on demand beats erroring with an instruction the user
-            // then has to retype — but say what is happening and how big it is,
+            // then has to retype, but say what is happening and how big it is,
             // because it is the one moment Obscura touches the network.
             eprintln!(
-                "model `{}` is not installed — downloading {} from {}",
+                "model `{}` is not installed, downloading {} from {}",
                 entry.id,
                 human_bytes(entry.approx_bytes),
                 entry.homepage
@@ -517,7 +517,7 @@ fn cmd_process(args: ProcessArgs) -> Result<()> {
                 .push((path, None));
         }
         ProgressEvent::Cancelled { remaining } => {
-            bar.abandon_with_message(format!("cancelled — {remaining} not processed"))
+            bar.abandon_with_message(format!("cancelled, {remaining} not processed"))
         }
         ProgressEvent::Finished { ok, failed } => {
             bar.finish_with_message(format!("done: {ok} ok, {failed} failed"))
@@ -557,7 +557,8 @@ fn cmd_process(args: ProcessArgs) -> Result<()> {
             summary.ok, summary.skipped
         );
     }
-    // A cancelled run is not a failed one — exit non-zero only for real errors,
+    // A cancelled run is not a failed one, so exit non-zero only for real
+    // errors,
     // so a Ctrl-C in a shell script does not read as a processing failure.
     if summary.failed > 0 {
         std::process::exit(1);
@@ -602,7 +603,7 @@ fn csv_field(s: &str) -> String {
 fn install_interrupt_handler(cancel: CancelToken) {
     let result = ctrlc::set_handler(move || {
         if cancel.is_cancelled() {
-            eprintln!("\ninterrupted again — exiting now");
+            eprintln!("\ninterrupted again, exiting now");
             std::process::exit(130);
         }
         eprintln!("\nstopping after the current file… (Ctrl-C again to force)");
@@ -647,7 +648,7 @@ fn cmd_models(cmd: ModelsCmd) -> Result<()> {
         }
         ModelsCmd::Show { id } => {
             let m = ob_core::registry::find(&id).context("unknown model")?;
-            println!("{} — {}\n", m.id, m.display_name);
+            println!("{}: {}\n", m.id, m.display_name);
             for s in &m.settings {
                 println!("  {} [{}]  default={:?}", s.key, s.label, s.default);
                 println!("      {}", s.tooltip);
@@ -661,7 +662,7 @@ fn cmd_models(cmd: ModelsCmd) -> Result<()> {
             let mut failed = 0;
             for e in entries {
                 if let Err(err) = fetch_one(&e, force, false) {
-                    eprintln!("  {} — FAILED: {err}", e.id);
+                    eprintln!("  {} FAILED: {err}", e.id);
                     failed += 1;
                 }
             }
@@ -688,7 +689,7 @@ fn cmd_models(cmd: ModelsCmd) -> Result<()> {
     Ok(())
 }
 
-/// `obscura setup` — get the machine to a working state in one command.
+/// `obscura setup`: get the machine to a working state in one command.
 ///
 /// Run by every installer after copying files, and the thing to tell a user to
 /// run when their install predates a new model. Idempotent: already-installed
@@ -714,7 +715,7 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
     println!("  model cache: {}", ob_models::cache_dir()?.display());
     if pending.is_empty() {
         println!(
-            "  all {} model(s) already installed — nothing to do",
+            "  all {} model(s) already installed, nothing to do",
             entries.len()
         );
     } else {
@@ -729,7 +730,7 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
     let mut failures = Vec::new();
     for e in &entries {
         if let Err(err) = fetch_one(e, args.force, args.quiet) {
-            eprintln!("  {} — FAILED: {err}", e.id);
+            eprintln!("  {} FAILED: {err}", e.id);
             failures.push(e.id);
         }
     }
@@ -746,7 +747,7 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
 
     if !failures.is_empty() {
         bail!(
-            "setup incomplete — could not download: {}. \
+            "setup incomplete, could not download: {}. \
              Check your connection and run `obscura setup` again.",
             failures.join(", ")
         );

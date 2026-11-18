@@ -65,8 +65,8 @@ pub fn nudenet_label_map() -> LabelMap {
 
 /// Index→category mapping for deepghs' `anime_censor_detection`.
 ///
-/// That model is a 3-class YOLOv8 (`nipple_f`, `penis`, `pussy`) — *not* the
-/// 18-class NudeNet taxonomy — so it needs its own map. Each class lands on an
+/// That model is a 3-class YOLOv8 (`nipple_f`, `penis`, `pussy`), *not* the
+/// 18-class NudeNet taxonomy, so it needs its own map. Each class lands on an
 /// existing Obscura category; the parts it cannot see (buttocks, anus, feet, belly,
 /// armpits, face) simply never fire, and it reports no `Covered` states.
 pub fn anime_censor_label_map() -> LabelMap {
@@ -92,12 +92,12 @@ pub struct ModelEntry {
     pub license: License,
     /// Square model input side in pixels (letterbox target).
     pub input_size: u32,
-    /// Download URL (only `ob-models` touches the network — R8).
+    /// Download URL (only `ob-models` touches the network, R8).
     pub url: &'static str,
     /// Expected SHA-256 of the downloaded file, lowercase hex.
     pub sha256: &'static str,
     pub label_map_fn: fn() -> LabelMap,
-    /// Per-model tunable settings (each carries its own tooltip — R7).
+    /// Per-model tunable settings (each carries its own tooltip, R7).
     pub settings: Vec<Setting>,
 
     // --- presentation metadata (model picker, download screen, credits) ---
@@ -111,7 +111,7 @@ pub struct ModelEntry {
     /// model's published parameter count at fp32 (a yolov8n at 3.2M params is
     /// ~12 MB, a yolov8s at 11.1M is ~44 MB, a yolov8m at 25.9M is ~100 MB);
     /// none has been weighed here, because no model host is reachable from the
-    /// build container. Never treat it as a size *check* — `fetch` uses the
+    /// build container. Never treat it as a size *check*; `fetch` uses the
     /// checksum for that.
     pub approx_bytes: u64,
     /// Project page for the weights, shown in the credits/licensing screen.
@@ -127,7 +127,7 @@ pub struct ModelEntry {
 /// from. Hand-written because `label_map_fn` is a function pointer, and
 /// comparing function addresses is not meaningful (they are not guaranteed
 /// unique across codegen units, so a derived `PartialEq` could report two
-/// distinct models equal — or one unequal to itself).
+/// distinct models equal, or one unequal to itself).
 impl PartialEq for ModelEntry {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -198,7 +198,7 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
                       (the default) averages every source pixel, so small regions \
                       survive a heavy downscale; Lanczos3 is sharper but rings \
                       around hard edges, which can read as a false edge. Nearest \
-                      point-samples and drops small features — avoid it.",
+                      point-samples and drops small features, so avoid it.",
         },
         Setting {
             key: "tiling",
@@ -238,7 +238,7 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
             },
             default: SettingValue::Int(12),
             unit: "",
-            tooltip: "Upper bound on tiles per frame — inference cost is linear \
+            tooltip: "Upper bound on tiles per frame. Inference cost is linear \
                       in this. When the grid would exceed it, tiles are enlarged \
                       (accepting some downscale) instead of the cap being broken.",
         },
@@ -250,7 +250,7 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
 /// **The NudeNet entries use GitHub's REST asset endpoint, not the
 /// `browser_download_url`.** The human-facing
 /// `github.com/OWNER/REPO/releases/download/TAG/FILE` URL now answers anonymous
-/// requests with HTTP 200 and a *sign-in page* rather than the file — verified
+/// requests with HTTP 200 and a *sign-in page* rather than the file. Verified
 /// 2026-08-28 from two unrelated networks, with identical 47,439-byte bodies,
 /// and independent of User-Agent. The repository is public and the assets are
 /// listed by the API, so this is GitHub restricting anonymous asset downloads,
@@ -267,8 +267,8 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
 /// start with an ONNX `ModelProto` header, and matched against the size
 /// GitHub's own metadata reports.
 ///
-/// The three anime digests were *not* computed from bytes — the HuggingFace LFS
-/// CDN does not resolve from the build container. They are the publisher's own
+/// The three anime digests were *not* computed from bytes, because the
+/// HuggingFace LFS CDN does not resolve from the build container. They are the publisher's own
 /// recorded SHA-256, read from
 /// `huggingface.co/api/models/deepghs/anime_censor_detection?blobs=true`, which
 /// reports `lfs.sha256` and `size` for every file without serving any of it.
@@ -287,13 +287,13 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
 /// downloads; paste that in to finish.
 ///
 /// A pinned HuggingFace entry resolves `main`, so a maintainer re-uploading the
-/// file breaks the download loudly rather than quietly substituting it — the
+/// file breaks the download loudly rather than quietly substituting it, the
 /// same trade the GitHub asset ids make.
 pub fn builtin_registry() -> Vec<ModelEntry> {
     vec![
         ModelEntry {
             id: "nudenet-320n",
-            display_name: "NudeNet 320n (real-life, light — default)",
+            display_name: "NudeNet 320n (real-life, light, default)",
             domain: Domain::RealLife,
             license: License::Apache2,
             input_size: 320,
@@ -302,7 +302,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             sha256: "c15d8273adad2d0a92f014cc69ab2d6c311a06777a55545f2c4eb46f51911f0f",
             label_map_fn: nudenet_label_map,
             settings: yolo_detect_settings(0.20),
-            summary: "Photographic content. The light, fast default — a yolov8n at \
+            summary: "Photographic content. The light, fast default: a yolov8n at \
                       320px. Good on ordinary photo resolutions; pair it with tiling \
                       for 4K.",
             approx_bytes: 12_150_158,
@@ -317,10 +317,10 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             input_size: 640,
             // asset 176832019 = 640m.onnx on tag v3.4-weights (103,538,690 bytes).
             url: "https://api.github.com/repos/notAI-tech/NudeNet/releases/assets/176832019",
-            sha256: "", // not yet pinned — see fn doc; fill from `obscura models fetch`
+            sha256: "", // not pinned; see fn doc and `obscura models fetch`
             label_map_fn: nudenet_label_map,
             settings: yolo_detect_settings(0.20),
-            summary: "Photographic content, best quality. A yolov8m at 640px — \
+            summary: "Photographic content, best quality. A yolov8m at 640px, \
                       roughly eight times the download and several times the \
                       inference cost of 320n, for better recall on small regions.",
             approx_bytes: 103_538_690,
@@ -329,19 +329,19 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
         },
         ModelEntry {
             id: "anime-censor-v1-s",
-            display_name: "deepghs anime_censor_detection v1.0_s (anime — default)",
+            display_name: "deepghs anime_censor_detection v1.0_s (anime, default)",
             domain: Domain::Anime,
             license: License::Mit,
             // yolov8s trained at imgsz 640 (from the repo's model_artifacts.json).
             input_size: 640,
             url: "https://huggingface.co/deepghs/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx",
             sha256: "2c2524824d7d320c5619a0a73702a2e2186f619067c823d211e94f7cfe489cba",
-            // 3 classes, NOT NudeNet's 18 — see `anime_censor_label_map`.
+            // 3 classes, NOT NudeNet's 18. See `anime_censor_label_map`.
             label_map_fn: anime_censor_label_map,
             // 0.238 is the threshold the repo publishes as F1-optimal.
             settings: yolo_detect_settings(0.238),
             summary: "Drawn/anime content. The default for illustration: a yolov8s \
-                      at 640px, F1 0.83. Detects nipples, penis and vulva only — \
+                      at 640px, F1 0.83. Detects nipples, penis and vulva only, so \
                       raise the region padding to cover more than the box itself.",
             approx_bytes: 44_586_353,
             homepage: "https://huggingface.co/deepghs/anime_censor_detection",
@@ -364,7 +364,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             // yolov8n sibling of v1.0_s: 3.01M params vs 11.1M, F1 0.80 vs 0.83.
             // Cheap enough to run as a second opinion on every frame.
             settings: yolo_detect_settings(0.278),
-            summary: "Drawn/anime content, fast. The yolov8n sibling of v1.0_s — a \
+            summary: "Drawn/anime content, fast. The yolov8n sibling of v1.0_s, a \
                       quarter the size at F1 0.80. Cheap enough to run on every \
                       frame of a video, or as a second opinion.",
             approx_bytes: 12_104_146,
@@ -382,12 +382,12 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             label_map_fn: anime_censor_label_map,
             // Same architecture and F1 (0.83) as v1.0_s but an earlier training
             // run, so its mistakes are the least correlated with v1.0_s's of any
-            // model here — the most informative second opinion. Note its
+            // model here, the most informative second opinion. Note its
             // F1-optimal threshold is far lower, 0.15.
             settings: yolo_detect_settings(0.15),
             summary: "Drawn/anime content, previous generation. Same architecture \
                       and F1 as v1.0_s from an earlier training run, so its \
-                      mistakes differ most — the best cross-check partner.",
+                      mistakes differ most, the best cross-check partner.",
             approx_bytes: 44_586_353,
             homepage: "https://huggingface.co/deepghs/anime_censor_detection",
             default_download: false,
@@ -411,8 +411,8 @@ pub fn default_downloads() -> Vec<ModelEntry> {
 }
 
 /// Approximate total bytes of [`default_downloads`], for the "this will
-/// download about N MB" line on the setup screen. See [`ModelEntry::approx_bytes`]
-/// — a display hint, not a measurement.
+/// download about N MB" line on the setup screen. See
+/// [`ModelEntry::approx_bytes`]: a display hint, not a measurement.
 pub fn default_download_bytes() -> u64 {
     default_downloads().iter().map(|m| m.approx_bytes).sum()
 }
@@ -463,7 +463,7 @@ mod tests {
     fn anime_model_uses_its_own_three_class_map() {
         let e = find("anime-censor-v1-s").unwrap();
         let lm = e.label_map();
-        // Not NudeNet's 18 — mapping it that way would mis-decode every box.
+        // Not NudeNet's 18. Mapping it that way would mis-decode every box.
         assert_eq!(lm.num_classes(), 3);
         assert_eq!(lm.get(0), Some(cat::FEMALE_BREAST_EXPOSED));
         assert_eq!(lm.get(1), Some(cat::MALE_GENITALIA_EXPOSED));
@@ -547,7 +547,7 @@ mod tests {
     fn model_entries_compare_by_id_not_function_address() {
         let a = find("nudenet-320n").unwrap();
         let b = find("nudenet-320n").unwrap();
-        // Reflexive and stable across separate constructions — the property a
+        // Reflexive and stable across separate constructions, the property a
         // derived PartialEq over a `fn` pointer cannot guarantee.
         assert_eq!(a, b);
         assert_ne!(a, find("nudenet-640m").unwrap());

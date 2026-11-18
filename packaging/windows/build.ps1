@@ -17,7 +17,7 @@
     only video needs it. This mirrors packaging/stage.sh, where omitting
     --ffmpeg is likewise supported.
 
-    When given, it must be an LGPL build —
+    When given, it must be an LGPL build:
     a GPL build would place all of Figura Obscura under the GPL. Get one from
     https://github.com/BtbN/FFmpeg-Builds (choose an asset with "lgpl" in the
     name, e.g. ffmpeg-n7.1-latest-win64-lgpl-shared-7.1.zip).

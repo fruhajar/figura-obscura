@@ -16,7 +16,7 @@ jobs:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
-      # Don't cancel the other platforms when one fails — the whole point of
+      # Don't cancel the other platforms when one fails. The whole point of
       # the matrix is to find out which platforms are affected.
       fail-fast: false
       matrix:

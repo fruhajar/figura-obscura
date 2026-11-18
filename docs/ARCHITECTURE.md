@@ -35,8 +35,8 @@ build-task crate that ships with neither.
 The graph has that shape because of four rules, each of which exists to keep one
 capability from leaking everywhere:
 
-- **`ob-core` performs no I/O and no inference.** It is types and policy —
-  the taxonomy, `Frame`/`BBox`/`Detection`/`Region`, the model registry, filter
+- **`ob-core` performs no I/O and no inference.** It's types and policy: the
+  taxonomy, `Frame`/`BBox`/`Detection`/`Region`, the model registry, filter
   rules, censor configuration. Everything else can depend on it freely because
   there is nothing in it to be careful about.
 - **`ob-models` is the only crate that touches the network** (requirement R8).
@@ -65,24 +65,22 @@ than no preview, because someone would tune against it and ship the difference.
 
 The stages:
 
-- **detect** — `ob_detect::Detector` turns a `Frame` into `Vec<Detection>` in
+- **detect.** `ob_detect::Detector` turns a `Frame` into `Vec<Detection>` in
   original-image pixel coordinates, already mapped into the canonical taxonomy.
-- **filter** — `ob_core::filter::FilterSet` decides which detections get
-  censored, expressed purely in the taxonomy so it is model-independent. Rules
-  are wildcard-capable over three axes (sex, part, state) with per-rule score
-  floors.
-- **censor** — `ob_censor::apply` renders solid fill, pixelate, blur or an image
+- **filter.** `ob_core::filter::FilterSet` decides which detections get
+  censored, expressed purely in the taxonomy so it stays model-independent.
+  Rules are wildcard-capable over three axes (sex, part, state) with per-rule
+  score floors.
+- **censor.** `ob_censor::apply` renders solid fill, pixelate, blur or an image
   overlay over each selected box, with padding and corner rounding.
 
 ### Detection failure is a policy decision, not an error
 
 When the detector fails, `OnDetectFailure` decides what happens, and the answer
 is the same in the batch, the dry run and the preview: pass the frame through,
-skip the file, or blank the frame entirely. `Blank` is the fail-closed choice —
+skip the file, or blank the frame entirely. `Blank` is the fail-closed choice:
 obliterate rather than risk a leak. This is centralised in one function
 specifically so the three callers cannot drift apart.
-
-### Hand-drawn regions enter the pipeline at the censor stage
 
 ### Two-phase batches
 
@@ -92,20 +90,22 @@ writes the files from that geometry **with no detector**. Between them sits a
 human.
 
 The property that makes it worth having is that the two halves cannot disagree.
-`CensorConfig::resolve` turns detections plus a profile into `CensorBox`es — the
-final rect, padding already applied, style already chosen — and `ob_censor::
-apply_boxes` draws those and nothing else. The review canvas calls the first and
-the commit calls both, so what is approved is what is written;
+`CensorConfig::resolve` turns detections plus a profile into `CensorBox`es (the
+final rect, padding already applied, style already chosen), and
+`ob_censor::apply_boxes` draws those and nothing else. The review canvas calls
+the first and the commit calls both, so what is approved is what gets written;
 `resolving_then_drawing_equals_drawing_directly` pins it, and
 `a_review_that_changes_nothing_writes_the_same_pixels` pins the whole path.
 
 Video replays the tracker at commit, fed exactly as the live pipeline feeds it:
 the reviewed detections on frames the detector ran on, `None` between. That is
-why an emptied frame is stored as an empty entry rather than deleted — `Some([])`
-ages a track out, `None` coasts it forward, and the difference is whether a box
-deleted in review stays deleted.
+why an emptied frame is stored as an empty entry rather than deleted.
+`Some([])` ages a track out and `None` coasts it forward, so the difference is
+whether a box deleted in review stays deleted.
 
-The GUI's Edit page is the manual fallback for what no model will find — a
+### Hand-drawn regions enter the pipeline at the censor stage
+
+The GUI's Edit page is the manual fallback for what no model will find: a
 licence plate, a face in the background, a region a detector missed. It skips
 detect and filter and hands its boxes straight to `ob_censor::apply`, one call
 per box so each can carry its own style. That is the whole integration: a
@@ -117,13 +117,13 @@ box *is* what the user drew and quietly growing it by the batch's 10% would make
 the drawn outline a lie. And the category is a placeholder that nothing reads:
 per-part overrides are empty for a manual box, since the taxonomy describes what
 a detector saw and nobody classified this. Corner rounding, which the batch
-holds once for the whole profile, is per box here — it is part of a box's
+holds once for the whole profile, is per box here. Rounding is part of a box's
 appearance, and a control that reshaped every box already drawn would be the
-only one on the page that did not act on the selection.
+only one on the page that didn't act on the selection.
 
 The document and its undo history (`ob-gui/src/edit.rs`) are GUI-only and
-deliberately pure — no context, no I/O — so the rules that are easy to get
-subtly wrong are testable on a machine with no display server: what counts as
+deliberately pure, with no context and no I/O, so the rules that are easy to
+get subtly wrong stay testable on a machine with no display server: what counts as
 one undo step, where a corner handle sits, what a drag that leaves the frame
 means. Undo is whole-document snapshots rather than inverse commands: the
 document is a few rectangles, so every edit is undoable by construction instead
@@ -139,7 +139,7 @@ YOLO-family models want a square input, so a frame is scaled to fit and padded.
 can be mapped back afterwards.
 
 The resampler matters more than it looks. A 4K frame reaching a 320px input is
-scaled by about 0.083, so a 40px feature becomes 3px — below the model's
+scaled by about 0.083, so a 40px feature becomes 3px, below the model's
 smallest stride. Point sampling reads one source pixel per output pixel and
 simply misses everything in between, which is how small subjects in
 high-resolution sources used to vanish before the model ever saw them. The
@@ -150,7 +150,7 @@ pixel. That property matters far more than the choice of kernel.
 ### Two wrappers, both `Detector`s
 
 `Detector` is the only thing the rest of the program knows about. Two
-implementations wrap others, so they compose — an ensemble of tiled detectors is
+implementations wrap others, so they compose. An ensemble of tiled detectors is
 just the two nested:
 
 - **`TiledDetector`** runs the model over the whole frame *and* over an
@@ -160,8 +160,9 @@ just the two nested:
   tiling is how that is recovered. In `Auto` mode it engages only when the
   whole-frame pass would downscale past `min_scale`.
 - **`EnsembleDetector`** runs several models and combines their verdicts. With
-  `min_votes == 1` (the default) it is a union — anything any model saw gets
-  censored, which is the fail-safe direction. Above that it demands corroboration.
+  `min_votes == 1` (the default) it's a union: anything any model saw gets
+  censored, which is the fail-safe direction. Above that it demands
+  corroboration.
   **Votes are counted per category among the members that could actually cast
   one**, because members do not share a taxonomy: without that clamp, adding a
   nipple specialist to a general model would *delete* every category the
@@ -186,8 +187,8 @@ whether or not any GPU provider took.
 
 ## Media I/O
 
-`FrameSource` and `FrameSink` are the seam — `next_frame` and
-`put_frame`/`finish`. The real-time screen tool reimplements them (R10).
+`FrameSource` and `FrameSink` are the seam: `next_frame`, `put_frame` and
+`finish`. The real-time screen tool reimplements them (R10).
 
 Video is a pair of ffmpeg child processes: one decoding to packed `rgb24` on
 stdout, one taking censored `rgb24` on stdin. The original file is muxed in a
@@ -197,8 +198,8 @@ audio.
 Three things in here are not obvious and all three were bugs first:
 
 - **The container picks the codec, not the user.** The output keeps the input's
-  extension, and a WebM muxer rejects h.264 while writing the header — before
-  reading a single frame — so every `.webm` failed with `Broken pipe` from a
+  extension, and a WebM muxer rejects h.264 while writing the header, before
+  it reads a single frame, so every `.webm` failed with `Broken pipe` from a
   dead encoder. `Container` decides.
 - **GIF cannot stream.** `palettegen` only emits its palette at end of input, so
   a single-pass graph holds the whole clip in memory; a long GIF walked the
@@ -209,8 +210,8 @@ Three things in here are not obvious and all three were bugs first:
   an image and keeps working with no ffmpeg installed.
 
 Child stderr is drained on a thread. This is not optional: a pipe nobody reads
-fills at 64 KiB and blocks the writer, and an ffmpeg blocked writing stderr never
-reads its stdin again — the encode would hang instead of failing.
+fills at 64 KiB and blocks the writer, and an ffmpeg blocked writing stderr
+never reads its stdin again. The encode hangs instead of failing.
 
 ## Threading and cancellation
 
@@ -229,15 +230,15 @@ inference, and because the tracker is stateful across frames.
 
 Inference holds a **pool** of ONNX sessions rather than one. `Session::run` takes
 `&mut self` and the engine shares one `&dyn Detector` across workers, so a
-session must be guarded — and a single guarded session meant twelve cores
-decoding twelve ways and inferring one way. The pool's size and each session's
+session has to be guarded. One guarded session meant twelve cores decoding
+twelve ways and inferring one way. The pool's size and each session's
 intra-op thread count are chosen together, and deliberately do not consume the
 whole machine: decode and encode are happening on the other workers at the same
 time. [`PERFORMANCE.md`](PERFORMANCE.md) has the measurements, including the two
 ways of getting this wrong that are both slower than the single mutex.
 
 **Cancellation** is a `CancelToken` polled between files and between video
-frames — never mid-file. That is what makes it safe: a file is either fully
+frames, never mid-file. That is what makes it safe: a file is either fully
 processed or never begun. A cancelled or failed video kills the encoder rather
 than letting it see a clean EOF, because on EOF ffmpeg would finalise and write
 out a truncated file, and a half-censored clip that looks playable is the one
@@ -246,27 +247,27 @@ one: it is reported separately so the CLI exits zero and the GUI shows no error.
 
 The GUI never blocks its UI thread. Batch runs, previews and input scans each
 spawn a worker reporting over an `mpsc` channel that the app drains once per
-frame. Previews are split in two — `preview_detect` (decode plus inference,
-hundreds of milliseconds to seconds) and `preview_compose` (repaint boxes, a few
-milliseconds) — so dragging a censor-style slider re-composes from cached
+frame. Previews are split in two: `preview_detect` does decode plus inference
+and takes hundreds of milliseconds to seconds, `preview_compose` repaints the
+boxes in a few. So dragging a censor-style slider re-composes from cached
 detections instead of re-running the model. Only a change that invalidates the
 detections re-runs inference.
 
 ## Estimating a run
 
-The naive estimate — elapsed ÷ files done × files remaining — says nothing until
-the first file lands, which on a batch of 4K video is exactly when someone wants
-to know, and treats a thumbnail and a feature film as equal.
+The naive estimate is elapsed ÷ files done × files remaining. It says nothing
+until the first file lands, which on a batch of 4K video is exactly when
+someone wants to know, and it treats a thumbnail and a feature film as equal.
 
 So the batch is measured first, and measurement is split from costing for the
 same reason the preview is: `probe` walks every file (a header read for images,
 one `ffprobe` per video) and `cost` re-answers "how long?" instantly, as often
 as a slider moves.
 
-Two properties make it work. The pass count comes from `tiles_for_size` — the
-planner the detector itself uses — so a 4K frame that tiles into twelve passes is
-costed as twelve, and the estimate cannot drift from the detector's behaviour
-because there is only one implementation. And the scan produces *relative*
+Two properties make it work. The pass count comes from `tiles_for_size`, the
+planner the detector itself uses, so a 4K frame that tiles into twelve passes
+is costed as twelve. The estimate can't drift from the detector's behaviour
+because there's only one implementation. And the scan produces *relative*
 weights; the absolute seconds-per-unit is calibrated from real runs and
 persisted, so an error in the constants stretches every item equally and cancels
 out of the ratio.
@@ -276,9 +277,10 @@ differently. Inference is a step function of the frame's size, so it comes from
 the tile planner (nine passes at 1080p, thirteen at 4K, with the default 320px
 input). Decode, composite and encode are close to linear in pixels, so they are
 costed by **area**, as a per-1080p-frame constant scaled by the frame's own area.
-Inference dominates at the default `detect_every` of 3, where the codec term is a
-couple of percent of a 4K clip; by one detection in thirty it is a third, and costing the skipped frames as free made a long clip at a low detect
-rate look an order of magnitude cheaper than it was.
+Inference dominates at the default `detect_every` of 3, where the codec term is
+a couple of percent of a 4K clip. By one detection in thirty it's a third, and
+costing the skipped frames as free made a long clip at a low detect rate look an
+order of magnitude cheaper than it was.
 
 Progress is credited **mid-file**, not only when a file lands.
 `ProgressEvent::FrameProgress` reports the encoder's position at most ten times a
@@ -313,5 +315,5 @@ Inference passes, and it is not close. The levers, roughly in order of effect:
 ensemble size (every member sees every frame), tiling mode and `max_tiles` (a 4K
 frame is one pass or thirteen), the model's input size, and for video
 `detect_every`. Decode and encode matter more than expected on image batches of
-compressed stills — enough that the release profile's optimisation level was
+compressed stills, enough that the release profile's optimisation level was
 worth 2× on its own.

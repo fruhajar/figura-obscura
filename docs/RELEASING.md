@@ -3,7 +3,7 @@
 Releases are **tag-driven GitHub releases**, built by CI on all three platforms:
 
 ```sh
-git push origin v0.7.0
+git push origin v1.0.0
 ```
 
 `.github/workflows/release.yml` builds Windows, Linux and macOS on their own
@@ -24,8 +24,8 @@ the distribution story.
 **One entry is left: `nudenet-640m`.** Everything else in
 `crates/ob-core/src/registry.rs` is pinned. An unpinned model means a corrupted
 or substituted download is caught only by the ONNX header sniff, not by a
-digest — a supply-chain property of shipping a downloader, so it stays on this
-list until it is done.
+digest. That's a supply-chain property of shipping a downloader, so it stays on
+this list until it's done.
 
 The three anime entries were pinned from HuggingFace's own metadata, which
 reports the SHA-256 of every LFS file without serving any of it:
@@ -79,7 +79,7 @@ it. `packaging/common/check-ffmpeg-licence.sh` enforces all of this, and
 
 | Platform | Where to get an LGPL build |
 |---|---|
-| Windows | <https://github.com/BtbN/FFmpeg-Builds> — an asset with `lgpl` in the name |
+| Windows | <https://github.com/BtbN/FFmpeg-Builds>, an asset with `lgpl` in the name |
 | macOS | build it: `./configure --disable-gpl --disable-nonfree` |
 | Linux | most distro builds are GPL; build LGPL, or omit `--ffmpeg` and let the tarball use the system ffmpeg |
 
@@ -107,8 +107,8 @@ than three runners. The bump commit therefore has to land before the tag.
 ## 2. Tag and push
 
 ```sh
-git tag -a v0.7.0 -m "Figura Obscura 0.7.0"
-git push origin v0.7.0
+git tag -a v1.0.0 -m "Figura Obscura 1.0.0"
+git push origin v1.0.0
 ```
 
 That is the whole release build. Nine minutes later there is a draft release

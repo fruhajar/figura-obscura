@@ -5,7 +5,7 @@
 //! seam is easy to reason about. Policy (plan defaults): **re-encode video,
 //! stream-copy audio**; default `libx264 -crf 20`.
 //!
-//! The codec is not free to choose, though — the *output container* constrains
+//! The codec is not free to choose, though. The *output container* constrains
 //! it, and the output keeps the input's extension. A WebM file takes only
 //! VP8/VP9/AV1 and Vorbis/Opus, so h.264 into one is rejected by the muxer
 //! before a single frame is read. [`Container`] is where that is decided.
@@ -199,8 +199,8 @@ impl VideoInfo {
     ///
     /// `frame_count` is itself derived from the container duration when
     /// `nb_frames` is absent, so this is the same fact read back the other way.
-    /// `None` means the file did not declare a length — a stream, or a
-    /// fragmented container — and callers must not invent one.
+    /// `None` means the file did not declare a length, so a stream or a
+    /// fragmented container, and callers must not invent one.
     pub fn duration_secs(&self) -> Option<f64> {
         // `probe` guarantees fps > 0, so this cannot divide by zero.
         self.frame_count.map(|n| n as f64 / self.fps)
@@ -218,8 +218,8 @@ const STDERR_KEEP: usize = 8 * 1024;
 ///
 /// ffmpeg says *why* it failed on stderr and then exits; everything we notice
 /// afterwards is a secondary symptom. Letting it inherit our stderr put that
-/// sentence wherever the process happened to be launched from — for a GUI
-/// started from a desktop entry, nowhere at all — and left the user with
+/// sentence wherever the process happened to be launched from, which for a GUI
+/// started from a desktop entry is nowhere at all, and left the user with
 /// `Broken pipe (os error 32)`, which names no cause.
 ///
 /// It has to be drained *while* the child runs rather than read after waiting
@@ -278,15 +278,15 @@ impl StderrTail {
 /// handling. ffmpeg will not write h.264 into a WebM file: the muxer rejects it
 /// while writing the header, before reading a single frame, so the encoder was
 /// already dead when the first `put_frame` ran and every `.webm` came back as
-/// `Broken pipe (os error 32)`. The codec is not a free choice — the container
-/// constrains it — so the container picks it.
+/// `Broken pipe (os error 32)`. The codec is not a free choice, because the
+/// container constrains it, so the container picks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Container {
     /// Animated GIF: a different encoder and a palette pass, not a codec choice.
     Gif,
     /// WebM: VP8/VP9/AV1 video and Vorbis/Opus audio, and nothing else.
     WebM,
-    /// mp4/mkv/mov/avi and friends — everything that takes h.264 happily.
+    /// mp4/mkv/mov/avi and friends: everything that takes h.264 happily.
     ///
     /// Also the landing place for the handful of exotic containers in
     /// `VIDEO_EXTS` that take neither h.264 nor VP9 (`.ogv`, `.dv`, `.vob`).
@@ -318,8 +318,8 @@ const WEBM_AUDIO: &[&str] = &["opus", "vorbis"];
 ///
 /// Both scales run "lower is better" and both start at 0, but x264 stops at 51
 /// and VP9 at 63, so the same number is not the same picture. Passing the
-/// default 20 through unchanged would ask VP9 for something markedly sharper —
-/// and larger — than the user picked on the scale the knob is documented in, so
+/// default 20 through unchanged would ask VP9 for something markedly sharper,
+/// and larger, than the user picked on the scale the knob is documented in, so
 /// the position on the scale is preserved rather than the number: 20 becomes
 /// 25, and the far end, 51, becomes 63.
 fn vp9_crf(crf: u32) -> u32 {
@@ -352,7 +352,7 @@ fn vpx_cpu_used(preset: &str) -> &'static str {
 ///
 /// With no duration there is nothing to spread across, so it falls back to one
 /// sample per second from the start. Seeking past the end simply yields no
-/// frame, which the sampler reads as end of stream — so an over-long list is
+/// frame, which the sampler reads as end of stream, so an over-long list is
 /// self-limiting rather than an error.
 fn sample_times(duration: Option<f64>, count: usize) -> Vec<f64> {
     let count = count.max(1);
@@ -475,8 +475,9 @@ impl FrameSource for FfmpegSampler {
 /// **The frame returned is the nearest one at or after the requested time, not
 /// necessarily frame `index` exactly.** Input seeking lands on a keyframe and
 /// decodes forward from there, and on a long-GOP codec that is close but not
-/// frame-accurate. For looking at detections that is the right trade — accuracy
-/// would mean decoding the whole clip — but it is the reason a reviewed video
+/// frame-accurate. For looking at detections that is the right trade, since
+/// accuracy would mean decoding the whole clip, but it is the reason a reviewed
+/// video
 /// shows the boxes beside an approximate frame rather than a guaranteed one.
 pub fn frame_at(path: &Path, index: u64, fps: f64) -> Result<Frame, MediaError> {
     let info = probe(path)?;
@@ -669,7 +670,7 @@ impl FfmpegSink {
         // cannot write one, and a naive `-f gif` produces a 256-colour mess
         // because ffmpeg falls back to a fixed palette. palettegen/paletteuse
         // over a `split` builds a palette from this clip's own colours in a
-        // single pass, which matters here — censor boxes are flat blocks of one
+        // single pass, which matters here: censor boxes are flat blocks of one
         // colour and a generic palette bands them visibly.
         if container == Container::Gif {
             // ...but it cannot be done in one pass over a pipe. `palettegen`
@@ -796,7 +797,7 @@ impl FfmpegSink {
     ///
     /// A write to the encoder essentially only fails one way: ffmpeg is already
     /// gone, and the pipe with it. `Broken pipe (os error 32)` is the symptom
-    /// of that, never the cause — the cause is on the child's stderr and in its
+    /// of that, never the cause. The cause is on the child's stderr and in its
     /// exit status, both of which are available right here. Reporting the EPIPE
     /// alone sent users looking at our pipe handling for a fault that was
     /// always in the arguments we had handed ffmpeg.
@@ -809,7 +810,7 @@ impl FfmpegSink {
         //
         // It costs nothing in the usual case: ffmpeg has already exited and is
         // a zombie holding its real exit status, and a signal to a zombie does
-        // nothing — so the status below is still the one ffmpeg chose.
+        // nothing, so the status below is still the one ffmpeg chose.
         let _ = self.child.kill();
         drop(self.stdin.take());
         let status = match self.child.wait() {
@@ -894,7 +895,7 @@ fn detail(msg: Option<String>) -> String {
 
 /// How to carry the source's audio into `container`.
 ///
-/// The policy is still "keep the user's audio, don't re-encode it" — `copy`
+/// The policy is still "keep the user's audio, don't re-encode it", so `copy`
 /// wherever the container will take the stream as it stands. WebM is the case
 /// where it won't: it accepts only Vorbis and Opus, so an AAC or MP3 track has
 /// to be converted rather than copied. Converting is the least-bad of the three
@@ -919,7 +920,7 @@ fn audio_codec_for(container: Container, info: &VideoInfo) -> &'static str {
 impl Drop for FfmpegSink {
     fn drop(&mut self) {
         // `finish` takes `stdin`, so a still-present stdin here means the sink
-        // was dropped without finishing — a cancelled or failed run. Killing
+        // was dropped without finishing: a cancelled or failed run. Killing
         // the encoder rather than letting it see a clean EOF is deliberate: on
         // EOF ffmpeg would finalise and *write out* a truncated file, which is
         // exactly what an abandoned censor job must not leave on disk.
@@ -1060,7 +1061,7 @@ mod tests {
     #[test]
     fn the_container_picks_the_codec_not_the_other_way_round() {
         // The whole bug in one assertion: a `.webm` output used to be handed
-        // libx264, which the WebM muxer rejects while writing the header — so
+        // libx264, which the WebM muxer rejects while writing the header, so
         // the encoder died before the first frame and every write came back
         // `Broken pipe (os error 32)`.
         assert_eq!(Container::of(Path::new("clip.webm")), Container::WebM);
@@ -1075,7 +1076,7 @@ mod tests {
 
     #[test]
     fn webm_copies_audio_it_can_hold_and_converts_audio_it_cannot() {
-        // Vorbis and Opus go through untouched — this is the ordinary case,
+        // Vorbis and Opus go through untouched. This is the ordinary case,
         // since output keeps the input's extension and WebM sources carry one
         // of the two.
         for ok in ["vorbis", "opus"] {

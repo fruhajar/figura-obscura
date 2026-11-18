@@ -1,4 +1,4 @@
-//! Non-maximum suppression and native-label mapping — pure and testable.
+//! Non-maximum suppression and native-label mapping: pure and testable.
 
 use ob_core::geometry::Detection;
 use ob_core::registry::LabelMap;

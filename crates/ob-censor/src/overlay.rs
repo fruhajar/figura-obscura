@@ -9,7 +9,7 @@ use ob_core::geometry::Frame;
 ///
 /// Row at a time. `put_pixel`/`get_pixel` bounds-check and recompute an offset
 /// for every pixel, which on a large blurred region is most of the cost of the
-/// copy — and both buffers are already packed RGB8, so the rows are directly
+/// copy, and both buffers are already packed RGB8, so the rows are directly
 /// assignable.
 fn crop(frame: &Frame, r: &Rect) -> RgbImage {
     let w = frame.width as usize;

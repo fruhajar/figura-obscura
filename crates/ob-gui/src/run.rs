@@ -41,7 +41,7 @@ pub fn build_detector(
 }
 
 /// IoU at which two members' boxes are treated as the same region. Matches the
-/// CLI's `build_ensemble` — the same models voting the same way must produce
+/// CLI's `build_ensemble`: the same models voting the same way must produce
 /// the same output whichever front end drove them.
 const ENSEMBLE_NMS_IOU: f32 = 0.45;
 
@@ -61,7 +61,7 @@ pub struct EnsembleSpec {
 
 impl EnsembleSpec {
     /// Read the spec out of the saved preferences, dropping a companion that
-    /// duplicates the primary — selecting a model as its own corroborator would
+    /// duplicates the primary. Selecting a model as its own corroborator would
     /// otherwise let one model agree with itself.
     pub fn from_prefs(prefs: &crate::prefs::Prefs) -> Self {
         let primary = prefs.profile.model_id.clone();
@@ -169,7 +169,7 @@ pub struct RunState {
     /// own `FileDone` can credit its whole cost without counting the part the
     /// frames already reported twice. Reset when a file starts or ends.
     current_work: f64,
-    /// Seconds per work unit — seeded from the last run on this machine and
+    /// Seconds per work unit, seeded from the last run on this machine and
     /// refined as this one proceeds.
     pub calibration: Calibration,
 }
@@ -243,9 +243,9 @@ impl RunState {
 
     /// Seconds remaining.
     ///
-    /// With a scan this is available from the first frame of the run — the
-    /// point at which someone deciding whether to leave it going overnight
-    /// actually wants it — and is weighted by what each remaining file costs
+    /// With a scan this is available from the first frame of the run, which is
+    /// the point at which someone deciding whether to leave it going overnight
+    /// actually wants it, and is weighted by what each remaining file costs
     /// rather than by how many are left.
     pub fn eta_secs(&self) -> Option<f64> {
         if let Some(remaining) = self.remaining_work() {
@@ -266,7 +266,7 @@ impl RunState {
     /// Re-derive the rate from everything finished so far.
     ///
     /// Called as files land, so a batch whose first estimate was built on the
-    /// previous machine's rate — or on the built-in default — converges on the
+    /// previous machine's rate, or on the built-in default, converges on the
     /// truth within the first few files instead of staying wrong all run.
     fn recalibrate(&mut self) {
         let credited = self.credited_work();
@@ -331,8 +331,8 @@ impl RunState {
 /// A batch run in flight.
 /// Which half of a batch a handle is running.
 ///
-/// The three share all their plumbing — one worker thread, one progress
-/// channel, one [`RunState`] — and differ only in which `ob_job` entry point
+/// The three share all their plumbing (one worker thread, one progress
+/// channel, one [`RunState`]) and differ only in which `ob_job` entry point
 /// they call and what they leave behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -630,8 +630,9 @@ fn apply_event(ev: ProgressEvent, state: &mut RunState) {
 
 /// A batch being measured on a worker thread.
 ///
-/// Probing is I/O over every file in the batch — a header read each for images,
-/// an `ffprobe` subprocess each for videos — so it never runs on the UI thread
+/// Probing is I/O over every file in the batch, a header read each for images
+/// and an `ffprobe` subprocess each for videos, so it never runs on the UI
+/// thread
 /// and never blocks the run. It is started when the input list changes, so by
 /// the time anyone presses Run the measurement is usually already in hand.
 ///
@@ -686,15 +687,15 @@ pub struct PreviewDone {
 /// A preview being rendered on a worker thread.
 ///
 /// Two flavours, because the two halves of a preview cost wildly different
-/// amounts. [`PreviewJob::detect`] loads the model and runs inference —
-/// hundreds of milliseconds at best, seconds on a tiled 4K frame.
+/// amounts. [`PreviewJob::detect`] loads the model and runs inference, which
+/// is hundreds of milliseconds at best and seconds on a tiled 4K frame.
 /// [`PreviewJob::compose`] only re-paints boxes onto a frame that was already
 /// detected, which is fast enough to keep up with a dragged slider. Both still
 /// run off the UI thread: even compositing a 4K frame with a large blur sigma
 /// is more than one frame's budget.
 pub struct PreviewJob {
     rx: Receiver<Result<PreviewDone, String>>,
-    /// True for the inference flavour — the UI says "detecting…" rather than
+    /// True for the inference flavour, so the UI says "detecting…" rather than
     /// "rendering…", because only one of the two is worth waiting through.
     pub is_detect: bool,
 }
@@ -777,7 +778,7 @@ mod tests {
         }
         // A 50k-image batch must not grow an unbounded Vec of paths.
         assert_eq!(s.log.len(), LOG_CAPACITY);
-        // It is the tail that is kept — the oldest entries are dropped.
+        // It is the tail that is kept; the oldest entries are dropped.
         assert_eq!(
             s.log.back().unwrap().path,
             PathBuf::from(format!("{}.png", LOG_CAPACITY + 49))

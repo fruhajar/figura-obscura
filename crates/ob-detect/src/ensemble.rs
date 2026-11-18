@@ -5,11 +5,11 @@
 //! [`EnsembleDetector`] runs each of them and combines the results under one of
 //! two opposite policies:
 //!
-//! * `min_votes == 1` (the default) — **union**. Anything any model sees gets
+//! * `min_votes == 1` (the default) is **union**. Anything any model sees gets
 //!   censored. Maximises recall, which is the fail-safe direction for a
 //!   censoring tool: a false positive costs a needlessly obscured patch, a false
 //!   negative costs the thing the tool exists to prevent.
-//! * `min_votes >= 2` — **consensus**. A region survives only if that many
+//! * `min_votes >= 2` is **consensus**. A region survives only if that many
 //!   models independently found it. Maximises precision at the cost of recall;
 //!   useful for auditing how much of a model's output is corroborated, and
 //!   dangerous as a production censoring policy.
@@ -19,7 +19,7 @@
 //! can never report buttocks, and a nipple specialist can never report anything
 //! else. Counting a global threshold against members structurally unable to
 //! vote would mean that adding a specialist *deletes* every category outside
-//! its competence — a specialist would make coverage strictly worse, which is
+//! its competence. A specialist would make coverage strictly worse, which is
 //! the opposite of why anyone adds one.
 //!
 //! Like [`crate::tile::TiledDetector`] this is itself a [`Detector`], so it
@@ -69,7 +69,7 @@ impl EnsembleDetector {
     ///
     /// So `--min-votes 2` across a general model and a nipple specialist still
     /// means "two must agree" for nipples, but stays "one is enough" for
-    /// genitalia — which only one of them can see. Without this clamp the
+    /// genitalia, which only one of them can see. Without this clamp the
     /// genitalia boxes would be silently discarded.
     fn required_votes(&self, category: Category) -> usize {
         self.min_votes.min(self.eligible_voters(category).max(1))
@@ -143,7 +143,7 @@ mod tests {
         }
     }
 
-    /// A detector that can only ever report one category — the shape of a
+    /// A detector that can only ever report one category: the shape of a
     /// specialist, e.g. a nipple-only model.
     struct Specialist {
         only: Category,
@@ -267,7 +267,7 @@ mod tests {
         // The regression this whole mechanism exists for. A generalist finds a
         // breast and a genitalia region; a nipple specialist corroborates only
         // the breast. Under a naive global --min-votes 2 the genitalia box gets
-        // one vote and is deleted — so adding a specialist would make coverage
+        // one vote and is deleted, so adding a specialist would make coverage
         // strictly *worse* outside its competence.
         let generalist = Box::new(Fixed(vec![det(10.0, 0.9), other_cat(40.0, 0.9)]));
         let specialist = Box::new(Specialist {
@@ -284,7 +284,7 @@ mod tests {
             "corroborated breast detection was dropped"
         );
         // Only one member can see genitalia at all, so one vote is the most
-        // that category can ever get — it must still be kept.
+        // that category can ever get, and it must still be kept.
         assert!(
             out.iter()
                 .any(|d| d.category == cat::FEMALE_GENITALIA_EXPOSED),

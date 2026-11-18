@@ -1,7 +1,7 @@
-//! `cargo xtask` — build-time asset generation for Figura Obscura.
+//! `cargo xtask`: build-time asset generation for Figura Obscura.
 //!
 //! Two tasks. `icons` renders the app icon set into `packaging/assets/`; those
-//! files are committed, so a normal build never needs it — re-run it only when
+//! files are committed, so a normal build never needs it. Re-run it only when
 //! the mark itself changes. `bench` times the shipped CLI over a generated
 //! corpus, which is how a performance claim about this repo gets a number.
 

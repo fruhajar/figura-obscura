@@ -7,7 +7,7 @@
 //! track must be seen once to appear. This also lets the pipeline detect only
 //! every Nth frame and reuse tracks in between.
 //!
-//! Pure and deterministic — no I/O, no timing — so it is unit-testable.
+//! Pure and deterministic, with no I/O and no timing, so it is unit-testable.
 
 use ob_core::geometry::{BBox, Detection};
 
@@ -77,7 +77,7 @@ impl Tracker {
 
     fn integrate(&mut self, dets: &[Detection]) {
         // `matched` is indexed by track, and must therefore grow with
-        // `self.tracks` — an unmatched detection pushes a new track inside this
+        // `self.tracks`, since an unmatched detection pushes a new track inside this
         // loop, and the next detection then iterates over it. Letting the two
         // fall out of step panicked on the second detection of the very first
         // frame: `tracks` had one entry, `matched` still had none.
@@ -110,7 +110,7 @@ impl Tracker {
                     // Marked matched, which does double duty: it keeps the two
                     // vectors the same length, and it stops a later detection in
                     // this same frame from matching a track that was created from
-                    // an earlier one — two detections in one frame are two
+                    // an earlier one. Two detections in one frame are two
                     // objects, and merging them would drop a censored region.
                     // It also exempts the new track from the ageing pass below,
                     // which is right: it was just seen.
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn a_track_created_this_frame_is_not_reused_by_a_later_detection() {
-        // Two overlapping detections in one frame are two objects — NMS decides
+        // Two overlapping detections in one frame are two objects. NMS decides
         // whether they should have been merged, not the tracker. If the second
         // matched the track the first had just created, one censored region
         // would silently vanish.

@@ -3,8 +3,9 @@
 What was measured, what changed, and what was tried and rejected.
 
 Everything here is **CPU execution provider only**. This repository has never
-been able to validate a GPU build — see the caveat in [`../README.md`](../README.md) —
-and nothing in this document is evidence about one. Where a change is expected
+been able to validate a GPU build (see the caveat in
+[`../README.md`](../README.md)), so nothing in this document is evidence about
+one. Where a change is expected
 to behave differently on a GPU that is said explicitly and marked unverified.
 
 ## How to reproduce
@@ -22,9 +23,9 @@ a comparison see identical bytes). This is the number that matters: it includes
 decode, inference, censoring and encode.
 
 **`stages`** calls a few library functions directly. It exists because the
-pipeline half cannot reach all of them — a detector finds nothing in
-procedurally generated images, so the censor renderers never run during a
-pipeline pass however the corpus is built. The stage half deliberately uses only
+pipeline half can't reach all of them: a detector finds nothing in procedurally
+generated images, so the censor renderers never run during a pipeline pass
+however the corpus is built. The stage half deliberately uses only
 functions that existed *before* this work, so the same file can be dropped into
 an older checkout and produce comparable numbers.
 
@@ -94,8 +95,8 @@ the wrong default by a wide margin.
 
 The middle row is the interesting one. It recovered the *stage* numbers almost
 fully (letterbox 4K: 16.3 ms → 6.7 ms) and moved the end-to-end figure not at
-all, because the remaining cost was PNG decode — `png` and `miniz_oxide`, which
-a per-package list of our own crates does not cover. Optimising the whole
+all, because the remaining cost was PNG decode in `png` and `miniz_oxide`, which
+a per-package list of our own crates doesn't cover. Optimising the whole
 workspace is what halved it.
 
 Cost: 3.3 MB, a little under 12%, on a binary that already carries ONNX Runtime.
@@ -108,24 +109,24 @@ measurement rather than a one-line change.
 
 ### The letterbox allocated per output pixel
 
-`contributions()` built a `Vec` of per-destination-pixel structs, each owning its
-own weight `Vec` — roughly 640 allocations per axis, rebuilt on every pass — and
-the result was resampled into an interleaved buffer that was then copied pixel
+`contributions()` built a `Vec` of per-destination-pixel structs, each owning
+its own weight `Vec`, so roughly 640 allocations per axis, rebuilt on every
+pass. The result was then resampled into an interleaved buffer and copied pixel
 by pixel into the planar tensor the model actually wants.
 
 It now builds flattened taps (three vectors per axis, once), writes straight
 into the planar tensor at the letterbox offset, and takes a fast path when the
-scale is 1 — which is the common case, because a tile is cropped at exactly the
-model's input size and so was running the entire separable-filter machinery to
-perform an identity resize.
+scale is 1. That's the common case: a tile is cropped at exactly the model's
+input size, so it was running the entire separable-filter machinery to perform
+an identity resize.
 
 The fast path deliberately excludes Lanczos3. At scale 1 its taps are not
 exactly `(0, 1, 0)`: `sinc(1)` evaluates to about `-2.8e-8` in `f32` rather than
 zero, so the filtered path there is very slightly not the identity, and taking
 the shortcut would change its output. The other three kernels are exact.
 
-Reading a sub-rectangle in place also removed `Frame::crop` from the tiled path
-— one full tile copy per tile per frame.
+Reading a sub-rectangle in place also removed `Frame::crop` from the tiled
+path, which was one full tile copy per tile per frame.
 
 ### The detector held one session behind a mutex
 
@@ -148,17 +149,17 @@ Two separate mistakes, both worth naming:
 1. ONNX Runtime sizes **each** session's intra-op pool to the machine. Four
    sessions therefore asked for forty-eight compute threads on twelve logical
    cores, on top of the batch engine's own workers.
-2. Budgeting from `rayon::current_num_threads()` — twelve — handed every session
-   twice the threads it wanted, because this machine has six physical cores and
-   hyperthreading. Inference is compute bound, so the second hyperthread on a
+2. Budgeting from `rayon::current_num_threads()`, which reports twelve, handed
+   every session twice the threads it wanted, because this machine has six
+   physical cores and hyperthreading. Inference is compute bound, so the second hyperthread on a
    core contends for the same execution units rather than adding throughput.
    Hence the `num_cpus` dependency: the physical count is the one that matters.
 
 The final split leaves about a third of the machine *unbudgeted for inference*
 on purpose. Sessions × intra-op threads = 4 on a 6-core box, because the other
-two cores are decoding and encoding the next images at the same time, and
-starving that half of the pipeline was what made the untiled case — which is
-mostly decode — slower rather than faster.
+two cores are decoding and encoding the next images at the same time. Starving
+that half of the pipeline was what made the untiled case, which is mostly
+decode, slower rather than faster.
 
 `OBSCURA_SESSIONS` and `OBSCURA_INTRA_THREADS` override both. They exist because
 the right split depends on the machine and on what else is running on it, and
@@ -177,9 +178,9 @@ maintains both.
 
 - `probe()` spawned one `ffprobe` per video, sequentially. It is parallel now;
   the win is latency to first estimate on a folder of clips.
-- `run()` copied the input tensor before handing it to ORT — 1.2 MB per pass at
-  320px, 4.9 MB at 640px, for a buffer the caller had just built and had no
-  further use for.
+- `run()` copied the input tensor before handing it to ORT. That's 1.2 MB per
+  pass at 320px and 4.9 MB at 640px, for a buffer the caller had just built and
+  had no further use for.
 - The censor renderers indexed the frame three times per pixel. They use row
   slices now, and `round_corners` visits only the four corner squares instead of
   scanning the whole rectangle to discover that the interior is unaffected.
@@ -194,9 +195,10 @@ maintains both.
 This was expected to be the single biggest win and **it is not a win at all on
 the CPU provider**. A tiled 4K frame is thirteen passes; the graph declares a
 symbolic batch axis, so all thirteen can go in one run instead of thirteen. The
-machinery works — `a_batched_grid_reports_exactly_what_window_by_window_reports`
-checks it against the real model — but it is consistently slower, monotonically
-worse as the batch grows, at every session and thread count tried:
+machinery works, and
+`a_batched_grid_reports_exactly_what_window_by_window_reports` checks it against
+the real model, but it's consistently slower. Monotonically worse as the batch
+grows, at every session and thread count tried:
 
 | batch size | 1 session | 2 sessions | 3 sessions |
 | ---: | ---: | ---: | ---: |
@@ -213,8 +215,8 @@ larger transient allocation.
 
 The code is kept, defaulted **off** (`MAX_BATCH = 1`), because the argument
 still holds for a GPU, where per-launch overhead dominates and wide batches are
-the normal way to feed one. That is **unverified** — there is no GPU here — so
-it is not a default anyone gets by accident. `OBSCURA_MAX_BATCH=8` turns it on
+the normal way to feed one. That is **unverified**, because there's no GPU here,
+so it isn't a default anyone gets by accident. `OBSCURA_MAX_BATCH=8` turns it on
 for someone in a position to measure it.
 
 The refactor it required was worth keeping regardless: `Detector::detect_regions`
@@ -226,9 +228,9 @@ is what removed the per-tile `Frame::crop`, and it is a better seam than
 Splitting the filter passes across rayon looked free and was not: when the call
 comes from a batch worker the pool is already fully committed, so the split adds
 scheduling overhead and cache pressure to every other worker for no gain. It is
-now conditional on `rayon::current_thread_index().is_none()` — that is, on the
-caller *not* being a rayon worker — so the video pipeline, GUI previews and
-single-file CLI runs get it and the batch engine does not.
+now conditional on `rayon::current_thread_index().is_none()`, meaning the
+caller is *not* itself a rayon worker. So the video pipeline, GUI previews and
+single-file CLI runs get it, and the batch engine doesn't.
 
 ## Not attempted
 
@@ -236,19 +238,20 @@ Costed, plausible, and deliberately left alone.
 
 - **Overlapping video decode / inference / encode.** The video path is strictly
   serial: while inference runs, both ffmpeg children idle. Bounded channels
-  between the three stages would overlap them — an estimated 1.3–2× on video, by
-  far the largest remaining win. The cost is a few frames of buffering (24 MB
-  per frame at 4K), new cancellation paths, and the guarantee that a cancelled
-  encode leaves nothing playable behind gets harder to hold.
+  between the three stages would overlap them, an estimated 1.3–2× on video and
+  by far the largest remaining win. The cost is a few frames of buffering (24 MB
+  per frame at 4K), new cancellation paths, and that the guarantee about a
+  cancelled encode leaving nothing playable behind gets harder to hold.
 - **Frame buffer recycling.** `FfmpegSource::next_frame` allocates and zeroes a
-  fresh buffer per frame — 24 MB at 4K. Only pays off with a pool that gets
-  buffers back, which is the pipelining work above, so it is listed here rather
+  fresh buffer per frame, 24 MB at 4K. It only pays off with a pool that gets
+  buffers back, which is the pipelining work above, so it's listed here rather
   than done half.
 - **A faster blur.** `image`'s `fast_blur` (three box passes) is several times
   quicker than the true Gaussian and visually near-identical. Blur is by far the
-  most expensive censor style — 89 ms for one region where a solid fill is 0.5 ms
-  — so this is the biggest remaining censor win. It changes output, so it would
-  ship as an opt-in `blur_quality` setting with `gaussian` as the default.
+  most expensive censor style, at 89 ms for one region where a solid fill is
+  0.5 ms, so this is the biggest remaining censor win. It changes output, so it
+  would ship as an opt-in `blur_quality` setting with `gaussian` as the
+  default.
 - **Quantised (INT8) model variants.** Typically 2–4× on CPU inference, which is
   what dominates a tiled run. It changes detections, so it belongs in the
   registry as its own entry with its own accuracy note, not as a switch on an
@@ -263,5 +266,5 @@ Costed, plausible, and deliberately left alone.
   available for the actual tuning workflow; needs a cache format, an eviction
   policy, and a correctness story about stale entries.
 - **SIMD in the resampler.** Worth revisiting now that `opt-level = 3` is doing
-  the auto-vectorisation the old profile forbade — but from a profile, not from
-  a guess.
+  the auto-vectorisation the old profile forbade. From a profile, though, not
+  from a guess.

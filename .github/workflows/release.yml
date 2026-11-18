@@ -2,7 +2,7 @@ name: Release
 
 # Tag-driven. `git tag v0.1.0 && git push origin v0.1.0` builds every platform
 # and opens a DRAFT release with the artifacts attached; publishing is a manual
-# click. Draft rather than live on purpose — an unsigned installer and a licence
+# click. Draft rather than live on purpose: an unsigned installer and a licence
 # file both deserve a look before anyone can download them.
 on:
   push:
@@ -144,7 +144,7 @@ jobs:
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists — uploading into it"
+            echo "release $tag already exists, uploading into it"
           else
             echo "creating draft release $tag"
             gh release create "$tag" \
