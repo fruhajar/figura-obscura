@@ -9,6 +9,10 @@
 - **[HOST-BUILD.md](HOST-BUILD.md)** — building on a real machine, including the
   per-vendor GPU prerequisites and how to tell whether a GPU build is actually
   using the GPU.
+- **[DETECTORS.md](DETECTORS.md)** - the five third-party models Obscura can
+  download, each one's licence and published operating point, the region-size
+  caveat that decides how much padding you need, and what has not been
+  measured here.
 - **[RELEASING.md](RELEASING.md)** — cutting a release: the version bump, the tag
   that builds all three platforms, what the notes have to say, and the smoke test
   before the draft is published.

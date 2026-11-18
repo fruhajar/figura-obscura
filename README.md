@@ -4,6 +4,14 @@ Figura Obscura finds explicit content in images and video and covers it up:
 solid blocks, pixelation, blur or an overlay image, applied only to the regions
 a detector actually found.
 
+**What it is for.** The moment before something is shared or filed: redacting an
+image before it goes into a ticket, a document or a bug report; screening a
+folder or an upload queue so nothing explicit reaches a shared screen; preparing
+an archive or a training set too large to look through by hand. Detection of
+this kind is ordinary content moderation, and the models here are the ones that
+job uses. What Obscura adds is doing it on your own machine, in bulk, with the
+result under your control rather than a service's.
+
 It runs entirely on your own machine. Nothing you process is uploaded, and
 nothing is sent anywhere while it runs. The detection models are downloaded once,
 before the first run, and after that the tool never opens a socket.
@@ -12,9 +20,11 @@ There are two front ends over the same engine: **`obscura-gui`**, a desktop app
 with a live preview, and **`obscura`**, a command-line tool for batches and
 scripts.
 
-> **Status:** feature complete and packaged. Installers exist for Windows, Linux
-> and macOS, and `cargo build --release`, `cargo test` (285 tests) and
-> `cargo clippy --all-targets` are green on rustc 1.98.0.
+> **Status:** finished. **v0.7.0 is the last planned release.** The feature set
+> is complete, installers exist for Windows, Linux and macOS, and
+> `cargo build --release`, `cargo test` (330 tests) and
+> `cargo clippy --all-targets` all pass on rustc 1.98.0. Clippy reports six
+> long-standing style warnings; nothing fails.
 >
 > Two things are genuinely unverified, and both are worth knowing before you
 > rely on the tool. **GPU builds have never run on real hardware**, so the
@@ -24,10 +34,11 @@ scripts.
 > cards' word for it.
 >
 > Where to read more: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the
-> pieces fit together, [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for what a
-> run costs and what has been measured, [`docs/HOST-BUILD.md`](docs/HOST-BUILD.md)
-> for building it yourself, and [`docs/RELEASING.md`](docs/RELEASING.md) for
-> cutting a release.
+> pieces fit together, [`docs/DETECTORS.md`](docs/DETECTORS.md) for the models
+> themselves and the limits of each,
+> [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for what a run costs and what has
+> been measured, [`docs/HOST-BUILD.md`](docs/HOST-BUILD.md) for building it
+> yourself, and [`docs/RELEASING.md`](docs/RELEASING.md) for cutting a release.
 
 ## Quickstart
 
@@ -98,7 +109,16 @@ tells you exactly where it looked when it cannot find them.
 ```sh
 obscura-gui                                # the desktop app
 obscura process ./photos -o ./censored     # the same thing, batched
+obscura preview photo.jpg -o covered.jpg   # one file, no batch and no output dir
 obscura --help
+```
+
+Settings travel as a **profile**, a JSON file the GUI exports and the CLI reads,
+so a configuration chosen by eye in the app can be handed to a script unchanged:
+
+```sh
+obscura profile save mine.json                     # a default profile to edit
+obscura process ./in -o ./out --profile mine.json  # run with it
 ```
 
 Other useful commands:
@@ -107,6 +127,7 @@ Other useful commands:
 obscura models list                    # what is installed, and how big the rest are
 obscura models show nudenet-320n       # every setting, with the text the GUI tooltips use
 obscura models path                    # where the cache lives
+obscura models fetch nudenet-640m      # also: verify <id>, remove <id>
 obscura process ./in -o ./out --no-auto-fetch   # fail rather than download, in a script
 ```
 
@@ -182,19 +203,46 @@ everything except the input and output ends.
   model missed, a licence plate, a face in the background. Drag boxes onto the
   picture, give each one its own style and corner rounding from the same picker
   the Tuning page uses, and save the result to a new file. Drag a box to move
-  it, a corner to resize it — the corner target is wider than the handle it
+  it, a corner to resize it. The corner target is wider than the handle it
   draws, because pressing near a corner is nearly always a resize. **Ctrl-click**
   adds boxes to the selection, and a style change then lands on all of them at
   once; a selection moves as one shape. The boxes are a list you can select,
-  hide, reorder and delete, and every change — drawing, moving, resizing,
-  restyling — is undoable with **Ctrl-Z** and redoable with **Ctrl-Y**
+  hide, reorder and delete, and every change (drawing, moving, resizing,
+  restyling) is undoable with **Ctrl-Z** and redoable with **Ctrl-Y**
   (**Ctrl-Shift-Z** works too). A whole drag is one step, not sixty. Dropping an
   image on the window while this page is open opens it here instead of queueing
   it.
 - **Models** installs, re-downloads and removes model files, with per-model
   progress, a cancel button, and the licence and source of each.
-- Settings are saved to `~/.config/figura-obscura/settings.json`, models to
-  `~/.cache/figura-obscura/models` (`OBSCURA_MODEL_DIR` overrides that).
+- **Review before writing** turns a batch into two passes. The detector runs
+  over everything and stops, writing nothing; the **Review** tab beside the
+  queue then walks you through what it found, on the same canvas the Edit page
+  uses, where you can drag a box, resize it, delete a false positive or draw
+  one over a region the model missed. **Write** then commits the result with no
+  detector involved. Files the detector found *nothing* in are listed too, and called
+  out: those are where a miss goes unnoticed. Only the geometry is reviewed;
+  the censor style still comes from Tuning, so changing it afterwards re-paints
+  without another detection pass.
+
+  Both halves resolve their boxes through the same call, so the canvas is not
+  an impression of the output: it is the output with the pixels still
+  reversible. The cost is that the pixels are decoded twice, which is why it is
+  off by default.
+
+  Video review is **experimental**: a slider steps between the frames the
+  detector actually ran on (one in `detect_every`), and a correction there
+  carries through the frames either side of it via the tracker, exactly as a
+  detection would. The seek is keyframe-accurate rather than frame-accurate, so
+  the picture beside the boxes is approximate.
+- **Settings** picks the colour scheme: light, dark, or whatever the desktop
+  asks for, plus one of six accent colours. The choice is per-machine and is
+  saved with the rest of your settings, so it is not carried along when you
+  export a profile. The page shows the controls the palette actually has to
+  carry (buttons, pills, a progress bar, a slider), so a scheme can be judged
+  there rather than by switching pages to find what went wrong.
+- Settings are saved to `~/.config/figura-obscura/settings.json` (on Windows
+  `%APPDATA%\figura-obscura`, on macOS `~/Library/Application Support`), models
+  to `~/.cache/figura-obscura/models` (`OBSCURA_MODEL_DIR` overrides that).
 
 ### Estimating a run
 
@@ -315,48 +363,11 @@ rings around hard edges, and a ringing halo is a false edge the detector can fir
 on. Try it if detail matters more to you than false positives. Do not use
 `nearest`; it exists for comparison only.
 
-### The anime models box the areola, not the whole breast
-
-The three `anime-censor-*` models share three native classes: `nipple_f`,
-`penis`, `pussy`. Obscura maps `nipple_f` onto its own `FEMALE_BREAST_EXPOSED`
-category, because that is the closest match in the canonical taxonomy, but the
-box the model emits bounds the areola rather than the breast. The covering
-rectangle is therefore areola-sized whatever figure it came from: on a small or
-flat chest that is a fair share of the area you would want covered, and on a
-large one it is a small fraction of it.
-
-If the intent is to obscure the breast rather than the nipple, raise the region
-padding (`censor.shape.padding`, default `0.10`, meaning 10% per side) well above
-that default. The GUI's padding field is an unbounded spin box for exactly this
-reason. There is no `--padding` flag on the command line, because padding is a
-profile field: set it in the GUI or in a saved profile, and pass that with
-`obscura process --profile`.
-
-A missing box and a too-small box look similar in the output but need opposite
-fixes: lower `conf_threshold` for the first, more padding for the second.
-
-These models are indifferent to body shape in the way that matters here. They are
-not looking for a breast silhouette at all, so an atypical or petite figure does
-not push them off-distribution the way a shape-based detector would be pushed.
-What did hurt them was scale, which tiling and filtered downscaling now address.
-That reasoning comes from the models' class list and architecture: **their actual
-recall across styles and figures has not been measured here.**
-
 ### Cross-examining several models
 
-Three anime detectors share the taxonomy above, so where they disagree is where
-any one of them is unsure:
-
-| id | F1 | Published threshold | Notes |
-|---|---|---|---|
-| `anime-censor-v1-s` | 0.83 | 0.238 | yolov8s, 11.1M parameters, the default |
-| `anime-censor-v1-n` | 0.80 | 0.278 | yolov8n, 3.01M, cheap enough to run on every frame |
-| `anime-censor-v0.10-s` | 0.83 | 0.15 | Same architecture as v1.0_s but an earlier training run, so its mistakes are the least correlated with the others', which makes it the most informative second opinion |
-
-Each entry carries its **own** published F1-optimal threshold, and they differ a
-lot (0.15 against 0.278). Using one model's threshold on another moves its
-operating point, so `--set` overrides apply only where a companion model declares
-the same key, leaving unset thresholds per-model.
+Several detectors can run over the same frame. Where models that share a
+taxonomy disagree is exactly where any one of them is unsure, so running two and
+combining their output is cheaper than trying to pick a winner:
 
 ```sh
 # Union (the default): cover anything any model saw, which maximises recall.
@@ -375,6 +386,14 @@ costs the very thing the tool exists to prevent. `--min-votes 2` is the opposite
 trade, useful for auditing how much of a model's output is corroborated and risky
 as a standing policy. One model firing twice on the same spot does not count as
 agreement.
+
+Each model carries its **own** published F1-optimal threshold, and across the
+anime family those differ by nearly a factor of two. Using one model's threshold
+on another moves its operating point, so `--set` overrides apply only where a
+companion model declares the same key, leaving unset thresholds per-model.
+Which models exist, what each one's threshold is, and which pairing gives the
+most informative second opinion are in
+[`docs/DETECTORS.md`](docs/DETECTORS.md).
 
 Votes are counted **per category, among the models that could cast one**. The
 anime entries have 3 classes and NudeNet has 18, so mixing the two families under
