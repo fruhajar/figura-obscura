@@ -211,3 +211,12 @@ commands are in [`HOST-BUILD.md`](HOST-BUILD.md).
   been run here, because no other weights were downloadable in the build
   container. Run a representative set through before promising anything about
   detection quality.
+- **The Windows job is the one that breaks, and it breaks quietly.** Twice now:
+  once on a `Source:` line added to the `.iss` with no matching `Copy-Item`
+  (25 days, fixed in 0.5.1), and once on v1.0.0 when a pruned `rust-cache`
+  left `ort`'s downloaded ONNX Runtime half-present and its build script
+  panicked copying `DirectML.dll` with `ERROR_PATH_NOT_FOUND`. Both times Linux
+  and macOS stayed green, and because the `release` job `needs` all three, it
+  was *skipped* rather than failed, so no draft appeared and nothing said why.
+  The release workflow no longer caches for this reason. **When a release looks
+  like it did nothing, check the Windows job first.**

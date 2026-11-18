@@ -68,9 +68,16 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-${{ matrix.os }}
+
+      # No build cache here, deliberately. `ort`'s build script downloads a
+      # prebuilt ONNX Runtime into target/, and Swatinem/rust-cache prunes
+      # target/ when it saves, so a restored cache can come back with the
+      # extracted runtime's directory missing while cargo still re-runs the
+      # script over it. That is how the Windows job died on v1.0.0:
+      #   ort-sys build.rs panicked copying DirectML.dll
+      #   Os { code: 3, kind: NotFound }   (ERROR_PATH_NOT_FOUND)
+      # CI keeps its cache, where a bad restore costs a re-run. A release runs
+      # once per tag and has to be right, so it builds from clean.
 
       # eframe links X11/Wayland and GL on Linux only; the other two use their
       # platform toolkits.
