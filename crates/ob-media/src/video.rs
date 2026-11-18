@@ -464,6 +464,64 @@ impl FrameSource for FfmpegSampler {
     }
 }
 
+/// Decode exactly one frame of a video by its index, without reading the rest.
+///
+/// For stepping through a clip rather than streaming it: a review jumps between
+/// frames that are seconds apart, and decoding from the start to reach each one
+/// makes a long clip unreviewable. Uses the same input seek (`-ss` before
+/// `-i`) as [`FfmpegSampler`], so it jumps keyframes rather than decoding up to
+/// the timestamp.
+///
+/// **The frame returned is the nearest one at or after the requested time, not
+/// necessarily frame `index` exactly.** Input seeking lands on a keyframe and
+/// decodes forward from there, and on a long-GOP codec that is close but not
+/// frame-accurate. For looking at detections that is the right trade — accuracy
+/// would mean decoding the whole clip — but it is the reason a reviewed video
+/// shows the boxes beside an approximate frame rather than a guaranteed one.
+pub fn frame_at(path: &Path, index: u64, fps: f64) -> Result<Frame, MediaError> {
+    let info = probe(path)?;
+    let frame_bytes = info.width as usize * info.height as usize * 3;
+    // A clip that declared no usable rate still has to answer; 0 is the first
+    // frame either way, which is what an image-like single-frame file wants.
+    let t = if fps > 0.0 { index as f64 / fps } else { 0.0 };
+
+    let mut out = tools::command(Tool::Ffmpeg)
+        .args(["-v", "error", "-nostdin"])
+        .args(["-ss", &format!("{t:.3}")])
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            MediaError::Video(format!(
+                "could not spawn ffmpeg to read frame {index} of {}: {e}\n{}",
+                path.display(),
+                tools::search_description(Tool::Ffmpeg)
+            ))
+        })?;
+
+    if out.stdout.len() < frame_bytes {
+        return Err(MediaError::Video(format!(
+            "frame {index} ({t:.3}s) is past the end of {}",
+            path.display()
+        )));
+    }
+    out.stdout.truncate(frame_bytes);
+    Ok(Frame::new(info.width, info.height, out.stdout)?)
+}
+
 /// Decodes raw RGB frames from a video by piping ffmpeg's `rawvideo` output.
 pub struct FfmpegSource {
     path: PathBuf,

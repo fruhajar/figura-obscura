@@ -11,6 +11,7 @@ mod downloads;
 mod edit;
 mod pages;
 mod prefs;
+mod review;
 mod run;
 /// Software UI renderer used by the screenshot tests (never shipped).
 #[cfg(test)]
@@ -62,8 +63,12 @@ fn main() -> eframe::Result<()> {
         "figura-obscura",
         options,
         Box::new(|cc| {
-            theme::install(&cc.egui_ctx);
-            Ok(Box::<ObApp>::default())
+            // The app's own saved scheme, installed before the first frame
+            // draws: `theme::install` on its own would paint one frame of the
+            // default dark palette over a light-mode desktop.
+            let mut app = Box::<ObApp>::default();
+            app.apply_scheme(&cc.egui_ctx);
+            Ok(app)
         }),
     )
 }

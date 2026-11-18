@@ -15,7 +15,7 @@ use egui::{Pos2, Rect, Vec2};
 use ob_censor::CensorError;
 use ob_core::censor::{CensorConfig, CensorStyle, RegionShape};
 use ob_core::geometry::{BBox, Detection, Frame};
-use ob_core::taxonomy::{Category, Part, Sex, State};
+use ob_core::taxonomy::Category;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -78,6 +78,20 @@ pub struct ManualBox {
     /// rather than deleted so a style can be compared against the original
     /// without losing the box.
     pub visible: bool,
+    /// What the detector called this region, when the box came from one.
+    ///
+    /// `None` for a box someone drew. In review it decides which style the
+    /// profile resolves for the box, and it is what a reviewed detection is
+    /// written back out with; in the hand editor nothing reads it.
+    pub category: Option<Category>,
+    /// The confidence the detector reported, carried so a review can show it
+    /// and so writing a box back out is lossless.
+    ///
+    /// Nothing downstream acts on it — the category filter has already run by
+    /// the time a review exists — but a box that came back from the canvas with
+    /// a different score than it went in with would make every file the user
+    /// merely *looked at* register as edited.
+    pub score: f32,
 }
 
 impl ManualBox {
@@ -88,12 +102,35 @@ impl ManualBox {
             style,
             rounding,
             visible: true,
+            category: None,
+            score: 1.0,
+        }
+    }
+
+    /// The box as a detection, for writing a review back out.
+    ///
+    /// A drawn box has no category, so it takes the one `ob-job` reserves for
+    /// exactly that — see [`ob_job::review::MANUAL`].
+    pub fn as_detection(&self) -> Detection {
+        Detection {
+            bbox: self.rect,
+            category: self.category.unwrap_or(ob_job::review::MANUAL),
+            score: self.score,
         }
     }
 
     /// What the list calls this box: its number and its style.
     pub fn label(&self) -> String {
         format!("Box {} · {}", self.id, style_name(&self.style))
+    }
+
+    /// What a review's list calls it: its number and what the model thought it
+    /// was, or that nobody classified it.
+    pub fn review_label(&self) -> String {
+        match self.category {
+            Some(c) => format!("{} · {c}", self.id),
+            None => format!("{} · added by hand", self.id),
+        }
     }
 }
 
@@ -496,14 +533,14 @@ pub fn render(source: &Frame, doc: &EditDoc) -> Result<Frame, CensorError> {
 /// Dress a hand-drawn rectangle up as a detection so the shared censor path can
 /// take it.
 ///
-/// The category is never consulted — `per_part` is empty in [`render`], so
+/// The category is never consulted here — `per_part` is empty in [`render`], so
 /// `style_for` falls through to the default every time — but one has to be
-/// supplied, and an honest "nobody classified this" beats borrowing a real
-/// body part's label.
+/// supplied, and it is the same sentinel a review uses, so the two mean the
+/// same thing by "nobody classified this".
 fn manual_detection(rect: BBox) -> Detection {
     Detection {
         bbox: rect,
-        category: Category::new(Sex::Unknown, Part::Face, State::Covered),
+        category: ob_core::taxonomy::cat::UNCLASSIFIED,
         score: 1.0,
     }
 }
@@ -518,9 +555,84 @@ pub fn style_name(s: &CensorStyle) -> &'static str {
     }
 }
 
+/// What the canvas is being used for, which decides how its boxes are drawn.
+///
+/// The interaction is identical either way — the same drag, resize, select,
+/// undo — and that is the point of having one canvas. What differs is where
+/// appearance comes from, and it has to differ, because the two jobs mean
+/// different things by a rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CanvasMode {
+    /// A document someone is censoring by hand. Each box carries its own style,
+    /// and the rectangle drawn is exactly the area covered — no padding, or the
+    /// outline would be a lie about what was about to happen.
+    #[default]
+    Manual,
+    /// A batch's detections, awaiting approval. Style and padding come from the
+    /// profile, so the rectangle drawn is the *detection* and the area covered
+    /// is that rectangle grown by the profile's padding. Both are painted, and
+    /// the difference between them is a thing worth seeing while tuning.
+    Review,
+}
+
+/// Build a document from a frame's detections.
+///
+/// Ids are positional and start at 1, so the numbers on screen match the rows
+/// in the list, and re-entering an item gives the same box the same number.
+pub fn doc_from_detections(dets: &[Detection], style: &CensorStyle, rounding: f32) -> EditDoc {
+    EditDoc {
+        boxes: dets
+            .iter()
+            .enumerate()
+            .map(|(i, d)| ManualBox {
+                id: i as u64 + 1,
+                rect: d.bbox,
+                style: style.clone(),
+                rounding,
+                visible: true,
+                category: Some(d.category),
+                score: d.score,
+            })
+            .collect(),
+    }
+}
+
+/// Read a reviewed document back out as detections.
+///
+/// Hidden boxes are dropped rather than carried: hiding one in a review means
+/// "do not censor this", which is the same thing deleting it means, and a
+/// hidden box that came back in the output would be the worst possible answer.
+pub fn detections_from_doc(doc: &EditDoc) -> Vec<Detection> {
+    doc.boxes
+        .iter()
+        .filter(|b| b.visible)
+        .map(|b| b.as_detection())
+        .collect()
+}
+
+/// Render a review's document: the profile decides style and padding.
+///
+/// Goes through `CensorConfig::resolve` and `apply_boxes`, which is literally
+/// the pair `ob_job::review::commit_pass` calls, so the canvas cannot drift
+/// from the file.
+pub fn render_review(
+    source: &Frame,
+    doc: &EditDoc,
+    profile: &ob_core::profile::Profile,
+) -> Result<Frame, CensorError> {
+    let dets = detections_from_doc(doc);
+    let boxes = profile
+        .censor
+        .resolve(&dets, source.width_f(), source.height_f());
+    let mut out = source.clone();
+    ob_censor::apply_boxes(&mut out, &boxes)?;
+    Ok(out)
+}
+
 /// Everything the Edit page owns: the loaded image, the document and its
 /// history, the selection, and the cached composite on screen.
 pub struct EditorState {
+    pub mode: CanvasMode,
     pub path: Option<PathBuf>,
     /// The image as decoded. Kept so every re-censor starts from clean pixels
     /// rather than from the last render, which would compound every edit.
@@ -551,6 +663,7 @@ pub struct EditorState {
 impl Default for EditorState {
     fn default() -> Self {
         Self {
+            mode: CanvasMode::default(),
             path: None,
             source: None,
             history: History::default(),
@@ -572,6 +685,7 @@ impl EditorState {
     /// Boxes are positions in a particular image; carrying them onto the next
     /// one would censor whatever happened to be at those coordinates.
     pub fn load(&mut self, path: PathBuf, frame: Frame) {
+        self.mode = CanvasMode::Manual;
         self.path = Some(path);
         self.source = Some(frame);
         self.history.reset(EditDoc::default());
@@ -716,8 +830,34 @@ impl EditorState {
     }
 
     /// The censored frame as it stands, or `None` with no image loaded.
-    pub fn composite(&self) -> Option<Result<Frame, CensorError>> {
-        self.source.as_ref().map(|src| render(src, self.doc()))
+    pub fn composite(
+        &self,
+        profile: &ob_core::profile::Profile,
+    ) -> Option<Result<Frame, CensorError>> {
+        self.source.as_ref().map(|src| match self.mode {
+            CanvasMode::Manual => render(src, self.doc()),
+            CanvasMode::Review => render_review(src, self.doc(), profile),
+        })
+    }
+
+    /// Take on a frame and a set of detections to review.
+    ///
+    /// Separate from [`load`](Self::load) because a review replaces the
+    /// document with boxes that already exist, and because its undo history
+    /// starts there: undoing past the detector's own answer, back to an empty
+    /// frame, would be undoing something nobody did.
+    pub fn load_review(&mut self, path: PathBuf, frame: Frame, dets: &[Detection]) {
+        let doc = doc_from_detections(dets, &self.new_style.clone(), self.new_rounding);
+        self.next_id = doc.boxes.len() as u64 + 1;
+        self.mode = CanvasMode::Review;
+        self.path = Some(path);
+        self.source = Some(frame);
+        self.history.reset(doc);
+        self.selection.clear();
+        self.drag = None;
+        self.error = None;
+        self.texture = None;
+        self.rendered = None;
     }
 
     /// The id the next box would get. Test-only: ids are an implementation

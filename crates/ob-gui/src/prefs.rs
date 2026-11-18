@@ -8,6 +8,7 @@
 //! when a run starts; losing the last few seconds of slider fiddling after a
 //! crash is a far smaller cost than rewriting the file sixty times a second.
 
+use crate::theme::Accent;
 use ob_core::profile::Profile;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -22,11 +23,19 @@ pub enum Tab {
     Tuning,
     Edit,
     Models,
+    Settings,
     About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Queue, Tab::Tuning, Tab::Edit, Tab::Models, Tab::About];
+    pub const ALL: [Tab; 6] = [
+        Tab::Queue,
+        Tab::Tuning,
+        Tab::Edit,
+        Tab::Models,
+        Tab::Settings,
+        Tab::About,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -34,6 +43,7 @@ impl Tab {
             Tab::Tuning => "Tuning",
             Tab::Edit => "Edit",
             Tab::Models => "Models",
+            Tab::Settings => "Settings",
             Tab::About => "About",
         }
     }
@@ -48,7 +58,45 @@ impl Tab {
             Tab::Tuning => glyph::NAV_TUNING,
             Tab::Edit => glyph::NAV_EDIT,
             Tab::Models => glyph::NAV_MODELS,
+            Tab::Settings => glyph::NAV_SETTINGS,
             Tab::About => glyph::NAV_ABOUT,
+        }
+    }
+}
+
+/// Which colour scheme to draw in.
+///
+/// `System` is the default rather than `Dark`: an app that ignores the desktop's
+/// own light/dark setting is the kind of detail people notice immediately. Where
+/// the platform does not report one — a bare window manager, most Linux setups
+/// without a portal — it resolves to dark, which is what the app shipped with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    pub const ALL: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeMode::System => "System",
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+        }
+    }
+
+    /// Resolve to an actual scheme. `system` is what the desktop reports, if it
+    /// reports anything at all.
+    pub fn is_dark(self, system: Option<bool>) -> bool {
+        match self {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => system.unwrap_or(true),
         }
     }
 }
@@ -69,10 +117,25 @@ pub struct Prefs {
     pub detect_every: u32,
     #[serde(default)]
     pub tab: Tab,
+    /// Light, dark, or whatever the desktop asks for.
+    #[serde(default)]
+    pub theme: ThemeMode,
+    /// The brand colour the accent-coloured controls use.
+    #[serde(default)]
+    pub accent: Accent,
     /// Set once the user has been through (or dismissed) first-run setup, so
     /// the wizard does not reappear for someone deliberately running offline.
     #[serde(default)]
     pub setup_done: bool,
+    /// Run the detector over the whole batch first and stop, so the regions can
+    /// be corrected before anything is written.
+    ///
+    /// Off by default. It is the better way to work on material you have not
+    /// processed before, and the wrong default for a batch whose settings are
+    /// already trusted: it costs a second decode of every file, and it will not
+    /// finish on its own.
+    #[serde(default)]
+    pub review_mode: bool,
     /// Show the uncensored source alongside the result in the preview.
     #[serde(default)]
     pub preview_compare: bool,
@@ -127,7 +190,10 @@ impl Default for Prefs {
             output_dir: None,
             detect_every: default_detect_every(),
             tab: Tab::default(),
+            theme: ThemeMode::default(),
+            accent: Accent::default(),
             setup_done: false,
+            review_mode: false,
             preview_compare: false,
             preview_auto: true,
             extra_models: Vec::new(),
@@ -255,6 +321,45 @@ mod tests {
         Prefs::default().save_to(&path).unwrap();
         assert!(path.exists());
         assert!(!path.with_extension("json.tmp").exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_theme_mode_resolves_against_what_the_desktop_reports() {
+        // An explicit choice ignores the desktop; System follows it, and falls
+        // back to dark where the platform reports nothing — which is most Linux
+        // setups without a portal, so it is the common case rather than an edge.
+        assert!(ThemeMode::Dark.is_dark(Some(false)));
+        assert!(!ThemeMode::Light.is_dark(Some(true)));
+        assert!(ThemeMode::System.is_dark(Some(true)));
+        assert!(!ThemeMode::System.is_dark(Some(false)));
+        assert!(ThemeMode::System.is_dark(None));
+    }
+
+    #[test]
+    fn the_colour_scheme_survives_a_round_trip() {
+        let path = tmp("scheme");
+        let p = Prefs {
+            theme: ThemeMode::Light,
+            accent: Accent::Teal,
+            ..Default::default()
+        };
+        p.save_to(&path).unwrap();
+        let back = Prefs::load_from(&path).unwrap();
+        assert_eq!(back.theme, ThemeMode::Light);
+        assert_eq!(back.accent, Accent::Teal);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_theme_setting_still_loads() {
+        // The field was added after 0.6.0 shipped, so every existing user's
+        // file lacks it; it has to default rather than reset the whole file.
+        let path = tmp("no-theme");
+        std::fs::write(&path, br#"{"version":1,"detect_every":3}"#).unwrap();
+        let p = Prefs::load_from(&path).expect("should load without a theme field");
+        assert_eq!(p.theme, ThemeMode::System);
+        assert_eq!(p.accent, Accent::Violet);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

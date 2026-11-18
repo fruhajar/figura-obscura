@@ -84,6 +84,27 @@ specifically so the three callers cannot drift apart.
 
 ### Hand-drawn regions enter the pipeline at the censor stage
 
+### Two-phase batches
+
+`ob_job::run` detects and writes in one pass. `ob_job::review` splits that in
+two: `detect_pass` runs the model and keeps only the geometry, `commit_pass`
+writes the files from that geometry **with no detector**. Between them sits a
+human.
+
+The property that makes it worth having is that the two halves cannot disagree.
+`CensorConfig::resolve` turns detections plus a profile into `CensorBox`es — the
+final rect, padding already applied, style already chosen — and `ob_censor::
+apply_boxes` draws those and nothing else. The review canvas calls the first and
+the commit calls both, so what is approved is what is written;
+`resolving_then_drawing_equals_drawing_directly` pins it, and
+`a_review_that_changes_nothing_writes_the_same_pixels` pins the whole path.
+
+Video replays the tracker at commit, fed exactly as the live pipeline feeds it:
+the reviewed detections on frames the detector ran on, `None` between. That is
+why an emptied frame is stored as an empty entry rather than deleted — `Some([])`
+ages a track out, `None` coasts it forward, and the difference is whether a box
+deleted in review stays deleted.
+
 The GUI's Edit page is the manual fallback for what no model will find — a
 licence plate, a face in the background, a region a detector missed. It skips
 detect and filter and hands its boxes straight to `ob_censor::apply`, one call

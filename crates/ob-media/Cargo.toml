@@ -10,5 +10,6 @@ description = "Figura Obscura media I/O: image decode/encode, video demux/encode
 [dependencies]
 ob-core = { workspace = true }
 image = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

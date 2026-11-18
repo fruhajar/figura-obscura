@@ -8,7 +8,7 @@
 //! The entry point is [`apply`], which the batch pipeline and the future screen
 //! tool both call with `frame → detections → censored frame`.
 
-use ob_core::censor::{CensorConfig, CensorStyle};
+use ob_core::censor::{CensorBox, CensorConfig, CensorStyle};
 use ob_core::geometry::{BBox, Detection, Frame};
 
 mod overlay;
@@ -45,31 +45,47 @@ impl Rect {
 ///
 /// `selected` are the detections the filter already chose (see
 /// `ob_core::filter`). Region padding/rounding from `cfg.shape` is applied here.
+///
+/// Policy resolution and drawing are two steps — [`CensorConfig::resolve`] then
+/// [`apply_boxes`] — rather than one loop that does both. They have to be
+/// separable because review hands a user the resolved boxes, lets them move
+/// them, and then draws *those*; if this function resolved policy privately,
+/// the reviewed boxes and the written pixels would be two independent
+/// interpretations of the same profile, and the only way to find out they had
+/// drifted would be to compare the output against the screen.
 pub fn apply(
     frame: &mut Frame,
     selected: &[Detection],
     cfg: &CensorConfig,
 ) -> Result<(), CensorError> {
+    let boxes = cfg.resolve(selected, frame.width_f(), frame.height_f());
+    apply_boxes(frame, &boxes)
+}
+
+/// Draw already-resolved boxes, mutating `frame`.
+///
+/// No policy is applied here: the rect is covered exactly as given, with no
+/// further padding, in the style the box carries. This is what both the batch
+/// commit and the hand editor call.
+pub fn apply_boxes(frame: &mut Frame, boxes: &[CensorBox]) -> Result<(), CensorError> {
     let (w, h) = (frame.width, frame.height);
-    for det in selected {
-        let padded = det.bbox.expanded(cfg.shape.padding, w as f32, h as f32);
-        let style = cfg.style_for(&det.category).clone();
-        let Some(rect) = Rect::from_bbox(&padded, w, h) else {
+    for b in boxes {
+        let Some(rect) = Rect::from_bbox(&b.rect, w, h) else {
             continue;
         };
         // Snapshot the region first when rounding is requested, so the corners
         // outside the rounded boundary can be restored after drawing.
-        let original = (cfg.shape.rounding > 0.0).then(|| copy_rect(frame, &rect));
-        match style {
-            CensorStyle::SolidFill { color } => solid_fill(frame, &rect, color),
-            CensorStyle::Pixelate { block } => pixelate(frame, &rect, block.max(1)),
-            CensorStyle::Blur { sigma } => overlay::blur(frame, &rect, sigma),
+        let original = (b.rounding > 0.0).then(|| copy_rect(frame, &rect));
+        match &b.style {
+            CensorStyle::SolidFill { color } => solid_fill(frame, &rect, *color),
+            CensorStyle::Pixelate { block } => pixelate(frame, &rect, (*block).max(1)),
+            CensorStyle::Blur { sigma } => overlay::blur(frame, &rect, *sigma),
             CensorStyle::ImageOverlay { path, fit, opacity } => {
-                overlay::image_overlay(frame, &rect, &path, fit, opacity)?
+                overlay::image_overlay(frame, &rect, path, *fit, *opacity)?
             }
         }
         if let Some(orig) = original {
-            round_corners(frame, &rect, &orig, cfg.shape.rounding);
+            round_corners(frame, &rect, &orig, b.rounding);
         }
     }
     Ok(())
@@ -211,7 +227,88 @@ fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ob_core::censor::RegionShape;
     use ob_core::taxonomy::cat;
+    use std::collections::HashMap;
+
+    /// Resolving a policy and then drawing the boxes must put down exactly the
+    /// pixels that applying the policy directly does.
+    ///
+    /// This is the whole premise of the review flow: the user is shown
+    /// `resolve`'s output, moves it about, and the committed file is
+    /// `apply_boxes`'s output. If the two paths could disagree, a reviewed
+    /// batch would be a reviewed *approximation* of the batch, and the only way
+    /// to notice would be to compare the written file against a screenshot.
+    #[test]
+    fn resolving_then_drawing_equals_drawing_directly() {
+        let mut per_part = HashMap::new();
+        per_part.insert(
+            ob_core::taxonomy::Part::Genitalia,
+            CensorStyle::SolidFill {
+                color: [7, 9, 11, 255],
+            },
+        );
+        let cfg = CensorConfig {
+            default_style: CensorStyle::Pixelate { block: 6 },
+            per_part,
+            // Padding and rounding both on: they are the two things `resolve`
+            // bakes in, and the two a second interpretation could get wrong.
+            shape: RegionShape {
+                padding: 0.22,
+                rounding: 0.3,
+            },
+        };
+        let dets = vec![
+            Detection {
+                bbox: BBox::new(6.0, 8.0, 30.0, 34.0),
+                category: cat::FEMALE_BREAST_EXPOSED,
+                score: 0.9,
+            },
+            Detection {
+                bbox: BBox::new(40.0, 20.0, 60.0, 50.0),
+                category: cat::FEMALE_GENITALIA_EXPOSED,
+                score: 0.8,
+            },
+        ];
+
+        let mut direct = checkerboard(80, 64);
+        apply(&mut direct, &dets, &cfg).unwrap();
+
+        let mut staged = checkerboard(80, 64);
+        let boxes = cfg.resolve(&dets, staged.width_f(), staged.height_f());
+        apply_boxes(&mut staged, &boxes).unwrap();
+
+        assert_eq!(direct.data, staged.data);
+    }
+
+    #[test]
+    fn resolve_bakes_the_padding_in_so_drawing_cannot_apply_it_twice() {
+        let cfg = CensorConfig {
+            shape: RegionShape {
+                padding: 0.5,
+                rounding: 0.0,
+            },
+            ..Default::default()
+        };
+        let det = Detection {
+            bbox: BBox::new(20.0, 20.0, 40.0, 40.0),
+            category: cat::FACE_FEMALE,
+            score: 1.0,
+        };
+        let boxes = cfg.resolve(std::slice::from_ref(&det), 200.0, 200.0);
+        assert_eq!(boxes.len(), 1);
+        // 20 wide grown by half its size per side.
+        assert_eq!(boxes[0].rect, BBox::new(10.0, 10.0, 50.0, 50.0));
+        assert_eq!(boxes[0].category, Some(cat::FACE_FEMALE));
+
+        // Re-resolving a resolved box is the mistake this guards: drawing must
+        // take the rect as final.
+        let mut once = checkerboard(200, 200);
+        apply_boxes(&mut once, &boxes).unwrap();
+        let mut twice = checkerboard(200, 200);
+        apply(&mut twice, std::slice::from_ref(&det), &cfg).unwrap();
+        assert_eq!(once.data, twice.data);
+    }
 
     fn checkerboard(w: u32, h: u32) -> Frame {
         let mut data = vec![0u8; (w * h * 3) as usize];

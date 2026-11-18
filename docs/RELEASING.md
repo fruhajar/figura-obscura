@@ -3,7 +3,7 @@
 Releases are **tag-driven GitHub releases**, built by CI on all three platforms:
 
 ```sh
-git push origin v0.6.0
+git push origin v0.7.0
 ```
 
 `.github/workflows/release.yml` builds Windows, Linux and macOS on their own
@@ -21,27 +21,43 @@ the distribution story.
 
 ### Pin the model checksums
 
-The registry ships with four empty `sha256` fields
-(`crates/ob-core/src/registry.rs`); only `nudenet-320n` is pinned. An unpinned
-model means a corrupted or substituted download is caught only by the ONNX header
-sniff, not by a digest. That is a supply-chain property of shipping a downloader,
-not a storefront requirement, so it stays on this list:
+**One entry is left: `nudenet-640m`.** Everything else in
+`crates/ob-core/src/registry.rs` is pinned. An unpinned model means a corrupted
+or substituted download is caught only by the ONNX header sniff, not by a
+digest — a supply-chain property of shipping a downloader, so it stays on this
+list until it is done.
+
+The three anime entries were pinned from HuggingFace's own metadata, which
+reports the SHA-256 of every LFS file without serving any of it:
 
 ```sh
-cargo run --release -p ob-cli -- setup --all
-# each download prints:  sha256 = <digest>
+curl -s "https://huggingface.co/api/models/deepghs/anime_censor_detection?blobs=true" \
+  | jq -r '.siblings[] | select(.rfilename|endswith(".onnx")) | "\(.lfs.sha256)  \(.rfilename)"'
 ```
 
-Paste each digest into its entry's `sha256`, then confirm:
+That works from inside the dev container, and it was validated against a known
+answer first: the mirror at `deepghs/nudenet_onnx` reports `320n.onnx` as
+`c15d8273…911f0f`, matching the digest computed here from GitHub's bytes. Use it
+for any future HuggingFace entry.
+
+`nudenet-640m` cannot be done this way. It is a GitHub release asset from 2024,
+and the API reports no `digest` for it, so it has to be downloaded:
 
 ```sh
-cargo run --release -p ob-cli -- models verify nudenet-320n   # "checksum OK"
+cargo run --release -p ob-cli -- models fetch nudenet-640m   # prints sha256 = <digest>
 ```
 
-> Never pin a digest computed inside the dev container. GitHub's release-asset
-> host answers there with a sign-in page, and HuggingFace's LFS CDN does not
-> resolve, so the digest would be the hash of an HTML document. See
-> [`HOST-BUILD.md`](HOST-BUILD.md).
+Paste it into the entry, then confirm:
+
+```sh
+cargo run --release -p ob-cli -- models verify nudenet-640m   # "checksum OK"
+```
+
+> **On a real machine, not in the dev container.** GitHub's release-asset host
+> answers there with a sign-in page and HuggingFace's LFS CDN does not resolve,
+> so a digest computed over a *download* there is the hash of an HTML document.
+> Reading a publisher's recorded digest out of an API, as above, is a different
+> thing and is safe anywhere. See [`HOST-BUILD.md`](HOST-BUILD.md).
 
 ### Decide how ffmpeg reaches the user
 
@@ -91,8 +107,8 @@ than three runners. The bump commit therefore has to land before the tag.
 ## 2. Tag and push
 
 ```sh
-git tag -a v0.6.0 -m "Figura Obscura 0.6.0"
-git push origin v0.6.0
+git tag -a v0.7.0 -m "Figura Obscura 0.7.0"
+git push origin v0.7.0
 ```
 
 That is the whole release build. Nine minutes later there is a draft release

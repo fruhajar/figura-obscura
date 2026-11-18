@@ -1,6 +1,6 @@
 //! The Batch page: what to process, where it goes, the preview, and the log.
 
-use crate::app::{open_in_file_manager, ObApp, RowKind, ToastKind};
+use crate::app::{open_in_file_manager, BatchTab, ObApp, RowKind, ToastKind};
 use crate::pages;
 use crate::theme;
 use egui::RichText;
@@ -12,7 +12,61 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
         "Batch",
         "Drop files or folders here, choose where the results go, then run.",
     );
+    tab_bar(app, ui);
+    ui.add_space(10.0);
 
+    match app.batch_tab {
+        BatchTab::Queue => queue_body(app, ui),
+        BatchTab::Review => pages::review::show(app, ui),
+    }
+}
+
+/// Queue and Review, as two halves of one page.
+///
+/// Review carries a count once there is one, because the number of regions
+/// waiting to be looked at is the reason to go there.
+fn tab_bar(app: &mut ObApp, ui: &mut egui::Ui) {
+    let p = theme::palette();
+    ui.horizontal(|ui| {
+        for tab in BatchTab::ALL {
+            let selected = app.batch_tab == tab;
+            let badge = match (tab, app.review.as_ref()) {
+                (BatchTab::Review, Some(s)) if !s.is_empty() => {
+                    format!("  ({})", s.review.region_count())
+                }
+                _ => String::new(),
+            };
+            let label = RichText::new(format!("{}{badge}", tab.label()))
+                .color(if selected { p.on_accent } else { p.text_dim });
+            let button = egui::Button::new(label)
+                .fill(if selected { p.accent } else { p.card })
+                .stroke(egui::Stroke::new(1.0_f32, p.stroke))
+                .rounding(egui::Rounding::same(theme::RADIUS))
+                .min_size(egui::vec2(104.0, 28.0));
+            if ui.add(button).clicked() {
+                app.batch_tab = tab;
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let running = app.is_running();
+            let mut review_mode = app.prefs.review_mode;
+            if ui
+                .add_enabled(
+                    !running,
+                    egui::Checkbox::new(&mut review_mode, "Review before writing"),
+                )
+                .on_hover_text(
+                    "Run the detector over the whole batch first and stop here, so                      you can correct what it found before any file is written.                      Costs a second pass over the pixels, and the batch does not                      finish on its own — you press Write when it looks right.",
+                )
+                .changed()
+            {
+                app.prefs.review_mode = review_mode;
+            }
+        });
+    });
+}
+
+fn queue_body(app: &mut ObApp, ui: &mut egui::Ui) {
     inputs_section(app, ui);
     ui.add_space(8.0);
     estimate_line(app, ui);

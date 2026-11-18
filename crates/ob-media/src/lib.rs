@@ -94,7 +94,12 @@ pub const VIDEO_EXTS: &[&str] = &[
 ];
 
 /// Classify a path by extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serializable because a saved review records what each item was, and a stored
+/// review has to come back knowing which items are videos — that is what
+/// decides whether the tracker replays at commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MediaKind {
     Image,
     Video,

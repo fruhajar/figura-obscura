@@ -16,7 +16,7 @@ use ob_track::TrackConfig;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// How many finished-file lines the activity log keeps.
@@ -329,11 +329,45 @@ impl RunState {
 }
 
 /// A batch run in flight.
+/// Which half of a batch a handle is running.
+///
+/// The three share all their plumbing — one worker thread, one progress
+/// channel, one [`RunState`] — and differ only in which `ob_job` entry point
+/// they call and what they leave behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Detect and write in one pass. What the app has always done.
+    Direct,
+    /// Detect only, keeping the geometry and writing nothing.
+    Detect,
+    /// Write from a reviewed geometry, with no detector involved.
+    Commit,
+}
+
+impl Phase {
+    /// What the status bar calls this while it runs.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Phase::Direct => "Running",
+            Phase::Detect => "Detecting",
+            Phase::Commit => "Writing",
+        }
+    }
+}
+
 pub struct RunHandle {
     rx: Receiver<ProgressEvent>,
     pub cancel: CancelToken,
     /// Where output is being written, for the "Open folder" action.
     pub output_dir: PathBuf,
+    pub phase: Phase,
+    /// [`Phase::Detect`] only: what the pass found, published when it finishes.
+    ///
+    /// Through a mutex rather than down the progress channel because it arrives
+    /// once, at the end, and threading a whole batch's geometry through an
+    /// event enum that every other variant is a few words wide would be a poor
+    /// trade.
+    review: Arc<Mutex<Option<ob_job::review::Review>>>,
 }
 
 impl RunHandle {
@@ -350,6 +384,73 @@ impl RunHandle {
         output_dir: PathBuf,
         detect_every: u32,
     ) -> Self {
+        Self::spawn_phase(
+            Phase::Direct,
+            profile,
+            settings,
+            spec,
+            inputs,
+            output_dir,
+            detect_every,
+            None,
+        )
+    }
+
+    /// Phase one: run the detector over the batch, writing nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_detect(
+        profile: &Profile,
+        settings: &SettingValues,
+        spec: &EnsembleSpec,
+        inputs: Vec<PathBuf>,
+        output_dir: PathBuf,
+        detect_every: u32,
+    ) -> Self {
+        Self::spawn_phase(
+            Phase::Detect,
+            profile,
+            settings,
+            spec,
+            inputs,
+            output_dir,
+            detect_every,
+            None,
+        )
+    }
+
+    /// Phase two: write the reviewed geometry out.
+    ///
+    /// Takes no model: the review *is* the decision, and letting a detector run
+    /// here would let it overrule what someone just approved.
+    pub fn spawn_commit(
+        profile: &Profile,
+        review: ob_job::review::Review,
+        output_dir: PathBuf,
+        detect_every: u32,
+    ) -> Self {
+        Self::spawn_phase(
+            Phase::Commit,
+            profile,
+            &SettingValues::new(),
+            &EnsembleSpec::default(),
+            Vec::new(),
+            output_dir,
+            detect_every,
+            Some(review),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_phase(
+        phase: Phase,
+        profile: &Profile,
+        settings: &SettingValues,
+        spec: &EnsembleSpec,
+        inputs: Vec<PathBuf>,
+        output_dir: PathBuf,
+        detect_every: u32,
+        reviewed: Option<ob_job::review::Review>,
+    ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = CancelToken::new();
 
@@ -358,6 +459,8 @@ impl RunHandle {
         let spec = spec.clone();
         let out = output_dir.clone();
         let worker_cancel = cancel.clone();
+        let review: Arc<Mutex<Option<ob_job::review::Review>>> = Arc::new(Mutex::new(None));
+        let result = review.clone();
 
         std::thread::spawn(move || {
             // `ob_job::run` needs a `Sync` progress closure because images are
@@ -367,15 +470,21 @@ impl RunHandle {
                 let _ = send.lock().unwrap_or_else(|e| e.into_inner()).send(ev);
             };
 
-            let detector = match spec.build(&settings) {
-                Ok(d) => d,
-                Err(e) => {
-                    emit(ProgressEvent::FileError {
-                        path: PathBuf::from(&spec.primary),
-                        error: e,
-                    });
-                    emit(ProgressEvent::Finished { ok: 0, failed: 1 });
-                    return;
+            // A commit needs no model, and building one would be both a
+            // pointless wait and a chance to fail for no reason.
+            let detector = if phase == Phase::Commit {
+                None
+            } else {
+                match spec.build(&settings) {
+                    Ok(d) => Some(d),
+                    Err(e) => {
+                        emit(ProgressEvent::FileError {
+                            path: PathBuf::from(&spec.primary),
+                            error: e,
+                        });
+                        emit(ProgressEvent::Finished { ok: 0, failed: 1 });
+                        return;
+                    }
                 }
             };
 
@@ -395,9 +504,26 @@ impl RunHandle {
                 video_opts: VideoEncodeOpts::default(),
                 cancel: worker_cancel,
             };
-            if let Err(e) = ob_job::run(&cfg, detector.as_ref(), &emit) {
-                // An error out of `run` itself (input expansion, mostly) never
-                // reaches the per-file channel, so report it explicitly.
+            let outcome = match phase {
+                Phase::Direct => {
+                    ob_job::run(&cfg, detector.as_deref().expect("built above"), &emit).map(|_| ())
+                }
+                Phase::Detect => ob_job::review::detect_pass(
+                    &cfg,
+                    detector.as_deref().expect("built above"),
+                    &emit,
+                )
+                .map(|found| {
+                    *result.lock().unwrap_or_else(|e| e.into_inner()) = Some(found);
+                }),
+                Phase::Commit => {
+                    let r = reviewed.unwrap_or_default();
+                    ob_job::review::commit_pass(&cfg, &r, &emit).map(|_| ())
+                }
+            };
+            if let Err(e) = outcome {
+                // An error out of the pass itself (input expansion, mostly)
+                // never reaches the per-file channel, so report it explicitly.
                 emit(ProgressEvent::FileError {
                     path: PathBuf::new(),
                     error: e.to_string(),
@@ -410,7 +536,14 @@ impl RunHandle {
             rx,
             cancel,
             output_dir,
+            phase,
+            review,
         }
+    }
+
+    /// Take the review a [`Phase::Detect`] worker produced, if it has finished.
+    pub fn take_review(&self) -> Option<ob_job::review::Review> {
+        self.review.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
     /// Drain pending events into `state`. Returns false once the worker is

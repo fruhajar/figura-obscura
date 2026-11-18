@@ -262,12 +262,33 @@ fn yolo_detect_settings(conf_default: f64) -> Vec<Setting> {
 /// re-uploads an asset the id changes and the download 404s (loudly), which is
 /// a better failure than silently fetching a login page.
 ///
-/// `nudenet-320n`'s digest is pinned: its bytes were fetched through the
-/// endpoint above, confirmed to start with an ONNX `ModelProto` header, and
-/// matched against the size GitHub's own metadata reports. `nudenet-640m` and
-/// the anime entries are still unpinned — 640m was not downloaded here, and the
-/// HuggingFace LFS CDN does not resolve from the build container. `obscura models
-/// fetch` prints the SHA-256 of what it downloads; paste those in to finish.
+/// **Where the pinned digests come from.** `nudenet-320n`'s was computed here
+/// from the bytes themselves, fetched through the endpoint above, confirmed to
+/// start with an ONNX `ModelProto` header, and matched against the size
+/// GitHub's own metadata reports.
+///
+/// The three anime digests were *not* computed from bytes — the HuggingFace LFS
+/// CDN does not resolve from the build container. They are the publisher's own
+/// recorded SHA-256, read from
+/// `huggingface.co/api/models/deepghs/anime_censor_detection?blobs=true`, which
+/// reports `lfs.sha256` and `size` for every file without serving any of it.
+/// That is the same digest HuggingFace verifies its own uploads against, so it
+/// pins "the file the publisher published", which is exactly what the field is
+/// for; what it cannot attest is that those bytes have ever been run here.
+///
+/// The method was checked against a known answer before being trusted: the
+/// mirror at `deepghs/nudenet_onnx` reports `320n.onnx` as
+/// `c15d8273…911f0f`, identical to the digest independently computed from
+/// GitHub's bytes above. Same file, two unrelated hosts, one digest.
+///
+/// `nudenet-640m` is the one still unpinned. It lives on GitHub, whose release
+/// API reports no `digest` for assets published in 2024, and it was never
+/// downloaded here. `obscura models fetch` prints the SHA-256 of what it
+/// downloads; paste that in to finish.
+///
+/// A pinned HuggingFace entry resolves `main`, so a maintainer re-uploading the
+/// file breaks the download loudly rather than quietly substituting it — the
+/// same trade the GitHub asset ids make.
 pub fn builtin_registry() -> Vec<ModelEntry> {
     vec![
         ModelEntry {
@@ -284,7 +305,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             summary: "Photographic content. The light, fast default — a yolov8n at \
                       320px. Good on ordinary photo resolutions; pair it with tiling \
                       for 4K.",
-            approx_bytes: 12 * 1024 * 1024,
+            approx_bytes: 12_150_158,
             homepage: "https://github.com/notAI-tech/NudeNet",
             default_download: true,
         },
@@ -302,7 +323,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             summary: "Photographic content, best quality. A yolov8m at 640px — \
                       roughly eight times the download and several times the \
                       inference cost of 320n, for better recall on small regions.",
-            approx_bytes: 100 * 1024 * 1024,
+            approx_bytes: 103_538_690,
             homepage: "https://github.com/notAI-tech/NudeNet",
             default_download: false,
         },
@@ -314,7 +335,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             // yolov8s trained at imgsz 640 (from the repo's model_artifacts.json).
             input_size: 640,
             url: "https://huggingface.co/deepghs/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx",
-            sha256: "", // not yet pinned — see fn doc; fill from `obscura models fetch`
+            sha256: "2c2524824d7d320c5619a0a73702a2e2186f619067c823d211e94f7cfe489cba",
             // 3 classes, NOT NudeNet's 18 — see `anime_censor_label_map`.
             label_map_fn: anime_censor_label_map,
             // 0.238 is the threshold the repo publishes as F1-optimal.
@@ -322,7 +343,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             summary: "Drawn/anime content. The default for illustration: a yolov8s \
                       at 640px, F1 0.83. Detects nipples, penis and vulva only — \
                       raise the region padding to cover more than the box itself.",
-            approx_bytes: 44 * 1024 * 1024,
+            approx_bytes: 44_586_353,
             homepage: "https://huggingface.co/deepghs/anime_censor_detection",
             default_download: true,
         },
@@ -338,7 +359,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             license: License::Mit,
             input_size: 640,
             url: "https://huggingface.co/deepghs/anime_censor_detection/resolve/main/censor_detect_v1.0_n/model.onnx",
-            sha256: "", // not yet pinned — see fn doc; fill from `obscura models fetch`
+            sha256: "029de0a116f6c3c73bde62d2a8354c78664795579858f3c8e28fc1b4633a891c",
             label_map_fn: anime_censor_label_map,
             // yolov8n sibling of v1.0_s: 3.01M params vs 11.1M, F1 0.80 vs 0.83.
             // Cheap enough to run as a second opinion on every frame.
@@ -346,7 +367,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             summary: "Drawn/anime content, fast. The yolov8n sibling of v1.0_s — a \
                       quarter the size at F1 0.80. Cheap enough to run on every \
                       frame of a video, or as a second opinion.",
-            approx_bytes: 12 * 1024 * 1024,
+            approx_bytes: 12_104_146,
             homepage: "https://huggingface.co/deepghs/anime_censor_detection",
             default_download: false,
         },
@@ -357,7 +378,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             license: License::Mit,
             input_size: 640,
             url: "https://huggingface.co/deepghs/anime_censor_detection/resolve/main/censor_detect_v0.10_s/model.onnx",
-            sha256: "", // not yet pinned — see fn doc; fill from `obscura models fetch`
+            sha256: "e9acfbfe4dd888d64d1b2b35a7acddbc0a84ede9800cae48ac7dfb1758943e7a",
             label_map_fn: anime_censor_label_map,
             // Same architecture and F1 (0.83) as v1.0_s but an earlier training
             // run, so its mistakes are the least correlated with v1.0_s's of any
@@ -367,7 +388,7 @@ pub fn builtin_registry() -> Vec<ModelEntry> {
             summary: "Drawn/anime content, previous generation. Same architecture \
                       and F1 as v1.0_s from an earlier training run, so its \
                       mistakes differ most — the best cross-check partner.",
-            approx_bytes: 44 * 1024 * 1024,
+            approx_bytes: 44_586_353,
             homepage: "https://huggingface.co/deepghs/anime_censor_detection",
             default_download: false,
         },
@@ -462,6 +483,32 @@ mod tests {
                 "model `{}` has a non-download URL: {}",
                 m.id,
                 m.url
+            );
+        }
+    }
+
+    #[test]
+    fn every_pinned_digest_is_a_sha256() {
+        // A typo'd or truncated digest fails every download of that model with
+        // a checksum mismatch, which reads as "the server sent bad bytes"
+        // rather than "the registry is wrong". Only `nudenet-640m` is allowed
+        // to be empty, and that is tracked in `RELEASING.md`.
+        for m in builtin_registry() {
+            if m.sha256.is_empty() {
+                assert_eq!(
+                    m.id, "nudenet-640m",
+                    "model {} is unpinned and not the known exception",
+                    m.id
+                );
+                continue;
+            }
+            assert_eq!(m.sha256.len(), 64, "model {} has a short digest", m.id);
+            assert!(
+                m.sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "model {} has a digest that is not lowercase hex",
+                m.id
             );
         }
     }

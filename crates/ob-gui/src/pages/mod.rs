@@ -5,6 +5,8 @@ pub mod editor;
 pub mod models;
 pub mod preview;
 pub mod queue;
+pub mod review;
+pub mod settings;
 pub mod setup;
 pub mod tuning;
 

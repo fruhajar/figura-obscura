@@ -8,6 +8,7 @@
 
 pub mod estimate;
 pub mod expand;
+pub mod review;
 
 use expand::{output_path, InputSpec, MediaItem};
 use ob_censor::apply as apply_censor;
@@ -254,7 +255,7 @@ pub fn censor_frame(
 /// now what", and they must answer it identically: a preview that quietly
 /// passed a frame through while the batch blanked it would be worse than no
 /// preview at all.
-fn apply_detect_failure(
+pub(crate) fn apply_detect_failure(
     frame: &mut Frame,
     policy: OnDetectFailure,
     error: &str,
@@ -295,7 +296,7 @@ fn process_image(
 /// because both the real pipeline and the dry-run sampler report the same way:
 /// a dry run over a folder of long clips is slow for the same reason a real one
 /// is, and used to be just as silent.
-struct FrameTicker<'a> {
+pub(crate) struct FrameTicker<'a> {
     path: &'a Path,
     total: Option<u64>,
     frame: u64,
@@ -307,7 +308,7 @@ struct FrameTicker<'a> {
 }
 
 impl<'a> FrameTicker<'a> {
-    fn new(
+    pub(crate) fn new(
         path: &'a Path,
         total: Option<u64>,
         progress: &'a (dyn Fn(ProgressEvent) + Sync),
@@ -322,7 +323,7 @@ impl<'a> FrameTicker<'a> {
     }
 
     /// Count one finished frame, reporting it if the interval has elapsed.
-    fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         self.frame += 1;
         let now = std::time::Instant::now();
         // The declared last frame is always reported, whatever the interval. It
