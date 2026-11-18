@@ -8,6 +8,7 @@
 
 pub mod estimate;
 pub mod expand;
+pub mod review;
 
 use expand::{output_path, InputSpec, MediaItem};
 use ob_censor::apply as apply_censor;
@@ -154,7 +155,7 @@ pub fn run(
 
     // Images in parallel, each isolated: one failure never aborts the batch.
     // rayon has no early exit, so cancelled items are skipped rather than
-    // dropped from the iterator — the cost is one atomic load per item.
+    // dropped from the iterator. The cost is one atomic load per item.
     images.par_iter().for_each(|item| {
         run_one(item, cfg, detector, progress, &ok, &failed, &skipped);
     });
@@ -250,11 +251,11 @@ pub fn censor_frame(
 
 /// The fail-closed policy, in one place.
 ///
-/// Both the batch path and the preview path have to answer "detection failed —
-/// now what", and they must answer it identically: a preview that quietly
+/// Both the batch path and the preview path have to answer "detection failed,
+/// now what?", and they have to answer it identically: a preview that quietly
 /// passed a frame through while the batch blanked it would be worse than no
 /// preview at all.
-fn apply_detect_failure(
+pub(crate) fn apply_detect_failure(
     frame: &mut Frame,
     policy: OnDetectFailure,
     error: &str,
@@ -295,7 +296,7 @@ fn process_image(
 /// because both the real pipeline and the dry-run sampler report the same way:
 /// a dry run over a folder of long clips is slow for the same reason a real one
 /// is, and used to be just as silent.
-struct FrameTicker<'a> {
+pub(crate) struct FrameTicker<'a> {
     path: &'a Path,
     total: Option<u64>,
     frame: u64,
@@ -307,7 +308,7 @@ struct FrameTicker<'a> {
 }
 
 impl<'a> FrameTicker<'a> {
-    fn new(
+    pub(crate) fn new(
         path: &'a Path,
         total: Option<u64>,
         progress: &'a (dyn Fn(ProgressEvent) + Sync),
@@ -322,7 +323,7 @@ impl<'a> FrameTicker<'a> {
     }
 
     /// Count one finished frame, reporting it if the interval has elapsed.
-    fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         self.frame += 1;
         let now = std::time::Instant::now();
         // The declared last frame is always reported, whatever the interval. It
@@ -348,14 +349,14 @@ impl<'a> FrameTicker<'a> {
 /// A dry run over a video: detect on a sample of frames, write nothing.
 ///
 /// This used to open the file, confirm it was readable and return 0. That was
-/// not merely uninformative — `--dry-run` feeds `--report` and the miss
+/// not merely uninformative: `--dry-run` feeds `--report` and the miss
 /// summary, so every clip landed in the "had none" column and dragged the
 /// reported miss rate down. A folder of videos could look like a detector
 /// failure when no inference had ever run.
 ///
 /// Detection happens on every sampled frame, so `detect_every` does not apply:
 /// it exists to let the tracker coast between neighbouring frames, and these
-/// samples are seconds apart. For the same reason no tracker is used — there is
+/// samples are seconds apart. For the same reason no tracker is used: there is
 /// no continuity between the samples to smooth.
 fn sample_video(
     input: &Path,
@@ -428,7 +429,7 @@ fn process_video(
 }
 
 /// One frame on its way through the pipeline, with whatever the detector had
-/// to say about it. `detections` is `None` on a frame the detector skipped —
+/// to say about it. `detections` is `None` on a frame the detector skipped,
 /// which is a different thing from an empty vec, and the tracker treats it so.
 struct Staged {
     frame: Frame,
@@ -452,7 +453,7 @@ fn pipeline_depth(width: u32, height: u32) -> usize {
 /// Decode, detect, and censor-plus-encode a video as three concurrent stages.
 ///
 /// The serial version did all three in one loop, so while inference ran both
-/// ffmpeg processes sat idle and vice versa — on a GPU build, where inference
+/// ffmpeg processes sat idle and vice versa. On a GPU build, where inference
 /// is comparatively quick, that left the device at a fraction of its capacity
 /// and the run bounded by codec work that was not overlapping with anything.
 ///
@@ -579,7 +580,8 @@ fn run_video_pipeline(
     })
 }
 
-/// Preview one file's detections/censoring without touching disk — used by the
+/// Preview one file's detections and censoring without touching disk. Used by
+/// the
 /// GUI live preview and `obscura preview`.
 pub fn preview(
     input: &Path,
@@ -607,19 +609,20 @@ pub struct PreviewPair {
 /// Decode plus inference costs hundreds of milliseconds to seconds; applying a
 /// filter and painting boxes costs a few milliseconds. A GUI that re-previews
 /// on every slider nudge must not re-run inference to answer "what does 0.12
-/// padding look like" — nothing about the *detections* changed. Keep one of
+/// padding look like", since nothing about the *detections* changed. Keep one
+/// of
 /// these while the model and its settings hold still, and feed it to
 /// [`preview_compose`] as often as the user moves something.
 #[derive(Debug, Clone)]
 pub struct PreviewSource {
     /// The frame exactly as decoded.
     pub frame: Frame,
-    /// Every detection the model reported, before the profile's filter — the
+    /// Every detection the model reported, before the profile's filter. The
     /// filter is part of what a preview is *for* varying, so it must not be
     /// baked in here.
     pub detections: Vec<Detection>,
     /// Set when the detector failed. Kept rather than returned as an error so
-    /// [`preview_compose`] can replay `on_detect_failure` — the user can see
+    /// [`preview_compose`] can replay `on_detect_failure`, so the user can see
     /// what "blank the frame" does without the failure having to recur.
     pub detect_error: Option<String>,
 }
@@ -628,7 +631,7 @@ pub struct PreviewSource {
 pub fn preview_detect(input: &Path, detector: &dyn Detector) -> Result<PreviewSource, JobError> {
     // Deliberately the cheap extension-only classifier, not `classify_resolved`.
     // A preview only ever shows one frame, and `load_image` reads the first
-    // frame of an animated GIF without needing ffmpeg installed — so previewing
+    // frame of an animated GIF without needing ffmpeg installed, so previewing
     // a GIF keeps working on a machine that can only do stills.
     let frame = match classify(input) {
         MediaKind::Image => load_image(input)?,
@@ -657,7 +660,7 @@ pub fn preview_detect(input: &Path, detector: &dyn Detector) -> Result<PreviewSo
 
 /// Apply a profile's filter and censor styles to an already-detected frame.
 ///
-/// Cheap and pure — no I/O, no inference. This is what a live preview re-runs
+/// Cheap and pure: no I/O, no inference. This is what a live preview re-runs
 /// while the user is dragging.
 pub fn preview_compose(src: &PreviewSource, profile: &Profile) -> Result<PreviewPair, JobError> {
     let original = src.frame.clone();
@@ -817,7 +820,7 @@ mod tests {
         assert_eq!(a.regions, 1);
         assert_eq!(a.censored.data[0..3], [255, 0, 0]);
 
-        // Deselecting the category censors nothing — from the same detections.
+        // Deselecting the category censors nothing, from the same detections.
         let none = Profile {
             filter: ob_core::filter::FilterSet {
                 rules: Vec::new(),
@@ -951,7 +954,7 @@ mod tests {
         };
 
         let summary = run(&cfg, &d, &|_| {}).unwrap();
-        // Every item is skipped, and — the point — none is counted as failed,
+        // Every item is skipped, and (the point here) none is counted as failed,
         // so the CLI exits 0 and the GUI shows no error.
         assert_eq!(summary.ok, 0);
         assert_eq!(summary.failed, 0);
@@ -1021,7 +1024,7 @@ mod tests {
         // The regression this guards: `--dry-run` used to open a video, confirm
         // it was readable and report 0 regions. Because dry-run output feeds
         // --report and the miss summary, every clip counted as "had none" and
-        // pushed the reported miss rate down — a folder of videos looked like a
+        // pushed the reported miss rate down. A folder of videos looked like a
         // broken detector when nothing had been inferred at all.
         let Some(clip) = a_test_clip("dryrun-video") else {
             eprintln!("skipped: ffmpeg unavailable");
@@ -1084,7 +1087,8 @@ mod tests {
     #[test]
     fn an_animated_gif_survives_as_an_animation() {
         // The regression: a GIF was classified as a still, so the batch decoded
-        // frame 1, censored it, and wrote a one-frame GIF back — every other
+        // frame 1, censored it, and wrote a one-frame GIF back, with every
+        // other
         // frame silently discarded. It must round-trip as an animation.
         if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {
             eprintln!("skipped: ffmpeg unavailable");
@@ -1204,7 +1208,7 @@ mod tests {
     fn a_webm_round_trips_instead_of_breaking_the_pipe() {
         // The regression: every `.webm` failed with `Broken pipe (os error
         // 32)`. The output kept the input's extension, but the encoder was
-        // always handed libx264, which the WebM muxer refuses — so ffmpeg died
+        // always handed libx264, which the WebM muxer refuses, so ffmpeg died
         // writing the header and the first frame we wrote hit a dead pipe. The
         // codec has to follow the container.
         if !ob_media::tools::is_available(ob_media::tools::Tool::Ffmpeg) {

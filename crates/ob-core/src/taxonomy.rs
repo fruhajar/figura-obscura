@@ -30,7 +30,7 @@ pub enum Part {
     Belly,
     Armpits,
     Face,
-    /// Derived in v1 from the top strip of a `Face` region — no detector class.
+    /// Derived in v1 from the top strip of a `Face` region, no detector class.
     Eyes,
 }
 
@@ -120,6 +120,22 @@ pub mod cat {
     // Derived, not emitted by NudeNet directly:
     c!(EYES_FEMALE, Female, Eyes, Exposed);
     c!(EYES_MALE, Male, Eyes, Exposed);
+
+    /// A region nobody classified: a box drawn by hand in the editor or during
+    /// a review.
+    ///
+    /// Not a real category, and not one any detector emits. `Face` is only
+    /// ever reported `Exposed`, and the anime models report no faces at all.
+    /// A value is needed because [`Detection`](crate::geometry::Detection)
+    /// requires one and because a video's tracker matches boxes *within* a
+    /// category, so drawn boxes need a bucket of their own that no detected box
+    /// can land in.
+    ///
+    /// [`CensorConfig::style_for`](crate::censor::CensorConfig::style_for)
+    /// special-cases it to the default style. Without that it would read as
+    /// `Part::Face` and quietly inherit a face override, so a box drawn over a
+    /// licence plate would be styled as a face.
+    pub const UNCLASSIFIED: Category = Category::new(Unknown, Face, Covered);
 }
 
 /// The 18 canonical categories that correspond exactly to NudeNet v3 classes,

@@ -5,7 +5,7 @@
 //! being fetched: its progress, its cancel token, and its outcome.
 //!
 //! It also caches [`ob_models::ModelStatus`]. That matters more than it looks:
-//! `status()` stats the file *and*, once a checksum is pinned, hashes it — a
+//! `status()` stats the file *and*, once a checksum is pinned, hashes it, and a
 //! 100 MB SHA-256 every frame would turn the model list into a slideshow. The
 //! cache is refreshed at startup and whenever a download or deletion changes
 //! the answer.
@@ -72,7 +72,7 @@ pub struct Downloads {
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     active: HashMap<String, Active>,
-    /// Cached `status()` per model id — see the module docs on why.
+    /// Cached `status()` per model id. See the module docs on why.
     status: HashMap<String, ModelStatus>,
     /// Last error per model, shown on its card until the next attempt.
     errors: HashMap<String, String>,
@@ -195,7 +195,7 @@ impl Downloads {
         }
     }
 
-    /// Cancel everything — used when the window is closing.
+    /// Cancel everything, for when the window is closing.
     pub fn cancel_all(&self) {
         for a in self.active.values() {
             a.cancel.cancel();
@@ -243,7 +243,7 @@ impl Downloads {
 /// precise than the estimate deserves.
 pub fn human_eta(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
-        return "—".into();
+        return "n/a".into();
     }
     let s = secs.round() as u64;
     if s < 60 {
@@ -266,8 +266,8 @@ mod tests {
         assert_eq!(human_eta(3700.0), "1h 01m");
         // A rate estimate can produce nonsense early on; it must not panic or
         // render as "NaNs".
-        assert_eq!(human_eta(f64::NAN), "—");
-        assert_eq!(human_eta(-1.0), "—");
+        assert_eq!(human_eta(f64::NAN), "n/a");
+        assert_eq!(human_eta(-1.0), "n/a");
     }
 
     #[test]

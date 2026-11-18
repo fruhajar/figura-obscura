@@ -7,12 +7,13 @@
 //!
 //! Resolution order, first hit wins:
 //!
-//! 1. `OBSCURA_FFMPEG` / `OBSCURA_FFPROBE` — an explicit override, for packagers and for
-//!    anyone who wants a hardware-accelerated build of their own.
+//! 1. `OBSCURA_FFMPEG` / `OBSCURA_FFPROBE`, an explicit override, for
+//!    packagers and for anyone who wants a hardware-accelerated build of
+//!    their own.
 //! 2. The bundle: the executable's own directory, its `bin/` subdirectory, and
 //!    the macOS `.app` layouts (`../Resources/bin`, `../Frameworks`).
-//! 3. `PATH`, as a bare command name — the developer/`cargo run` case, and the
-//!    Linux distro-package case where ffmpeg is a real dependency.
+//! 3. `PATH`, as a bare command name: the developer and `cargo run` case,
+//!    and the Linux distro-package case where ffmpeg is a real dependency.
 //!
 //! The result is cached: the search touches the filesystem, and a batch job
 //! spawns ffmpeg once per video.
@@ -91,7 +92,7 @@ fn resolve(tool: Tool) -> PathBuf {
 /// The directory-search half of [`resolve`], taking its candidates explicitly.
 ///
 /// Split out so the search order can be tested against a temporary directory
-/// rather than against whatever happens to sit beside the test binary — the
+/// rather than against whatever happens to sit beside the test binary. The
 /// difference between proving the bundle wins and merely observing that some
 /// ffmpeg was found on `PATH`.
 fn resolve_in(tool: Tool, dirs: &[PathBuf]) -> PathBuf {
@@ -152,7 +153,7 @@ pub fn path_for(tool: Tool) -> &'static Path {
 
 /// Whether `tool` can actually be run right now.
 ///
-/// Spawning it is the only honest test — a bare name resolved against `PATH`
+/// Spawning it is the only honest test: a bare name resolved against `PATH`
 /// cannot be checked with a filesystem probe. `-version` is cheap and exits 0.
 pub fn is_available(tool: Tool) -> bool {
     std::process::Command::new(path_for(tool))
@@ -200,7 +201,7 @@ pub fn install_hint() -> &'static str {
 }
 
 /// Install commands for the common package managers on this platform, for the
-/// details view — the single hint above is right more often than not, but a
+/// details view. The single hint above is right more often than not, but a
 /// user on Arch or Fedora should not have to go and look it up.
 pub fn install_hint_all() -> &'static [(&'static str, &'static str)] {
     #[cfg(target_os = "windows")]
@@ -308,7 +309,7 @@ mod tests {
     #[test]
     fn unresolved_tool_falls_back_to_a_bare_name() {
         // No bundled ffmpeg sits next to the test binary, so resolution must
-        // yield a bare command name for the OS to look up on PATH — not an
+        // yield a bare command name for the OS to look up on PATH, not an
         // absolute path into the target directory that would never exist.
         let p = resolve(Tool::Ffprobe);
         assert_eq!(p, PathBuf::from(format!("ffprobe{EXE_SUFFIX}")));

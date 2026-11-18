@@ -8,7 +8,7 @@
 //! The entry point is [`apply`], which the batch pipeline and the future screen
 //! tool both call with `frame → detections → censored frame`.
 
-use ob_core::censor::{CensorConfig, CensorStyle};
+use ob_core::censor::{CensorBox, CensorConfig, CensorStyle};
 use ob_core::geometry::{BBox, Detection, Frame};
 
 mod overlay;
@@ -45,31 +45,47 @@ impl Rect {
 ///
 /// `selected` are the detections the filter already chose (see
 /// `ob_core::filter`). Region padding/rounding from `cfg.shape` is applied here.
+///
+/// Policy resolution and drawing are two steps, [`CensorConfig::resolve`] then
+/// [`apply_boxes`], rather than one loop that does both. They have to be
+/// separable because review hands a user the resolved boxes, lets them move
+/// them, and then draws *those*; if this function resolved policy privately,
+/// the reviewed boxes and the written pixels would be two independent
+/// interpretations of the same profile, and the only way to find out they had
+/// drifted would be to compare the output against the screen.
 pub fn apply(
     frame: &mut Frame,
     selected: &[Detection],
     cfg: &CensorConfig,
 ) -> Result<(), CensorError> {
+    let boxes = cfg.resolve(selected, frame.width_f(), frame.height_f());
+    apply_boxes(frame, &boxes)
+}
+
+/// Draw already-resolved boxes, mutating `frame`.
+///
+/// No policy is applied here: the rect is covered exactly as given, with no
+/// further padding, in the style the box carries. This is what both the batch
+/// commit and the hand editor call.
+pub fn apply_boxes(frame: &mut Frame, boxes: &[CensorBox]) -> Result<(), CensorError> {
     let (w, h) = (frame.width, frame.height);
-    for det in selected {
-        let padded = det.bbox.expanded(cfg.shape.padding, w as f32, h as f32);
-        let style = cfg.style_for(&det.category).clone();
-        let Some(rect) = Rect::from_bbox(&padded, w, h) else {
+    for b in boxes {
+        let Some(rect) = Rect::from_bbox(&b.rect, w, h) else {
             continue;
         };
         // Snapshot the region first when rounding is requested, so the corners
         // outside the rounded boundary can be restored after drawing.
-        let original = (cfg.shape.rounding > 0.0).then(|| copy_rect(frame, &rect));
-        match style {
-            CensorStyle::SolidFill { color } => solid_fill(frame, &rect, color),
-            CensorStyle::Pixelate { block } => pixelate(frame, &rect, block.max(1)),
-            CensorStyle::Blur { sigma } => overlay::blur(frame, &rect, sigma),
+        let original = (b.rounding > 0.0).then(|| copy_rect(frame, &rect));
+        match &b.style {
+            CensorStyle::SolidFill { color } => solid_fill(frame, &rect, *color),
+            CensorStyle::Pixelate { block } => pixelate(frame, &rect, (*block).max(1)),
+            CensorStyle::Blur { sigma } => overlay::blur(frame, &rect, *sigma),
             CensorStyle::ImageOverlay { path, fit, opacity } => {
-                overlay::image_overlay(frame, &rect, &path, fit, opacity)?
+                overlay::image_overlay(frame, &rect, path, *fit, *opacity)?
             }
         }
         if let Some(orig) = original {
-            round_corners(frame, &rect, &orig, cfg.shape.rounding);
+            round_corners(frame, &rect, &orig, b.rounding);
         }
     }
     Ok(())
@@ -92,7 +108,7 @@ fn copy_rect(frame: &Frame, r: &Rect) -> Vec<u8> {
 /// rounded-rectangle boundary, giving the censored box rounded corners.
 ///
 /// `rounding` is the corner radius as a fraction of the region's shorter side
-/// (0.5 makes the shorter axis a full semicircle — a stadium shape). `orig` is
+/// (0.5 makes the shorter axis a full semicircle, a stadium shape). `orig` is
 /// the packed snapshot from [`copy_rect`] for the same rectangle.
 fn round_corners(frame: &mut Frame, r: &Rect, orig: &[u8], rounding: f32) {
     let w = frame.width as usize;
@@ -169,7 +185,7 @@ fn solid_fill(frame: &mut Frame, r: &Rect, color: [u8; 4]) {
 ///
 /// Both halves walk the cell as row slices rather than recomputing
 /// `(y * w + x) * 3` per pixel per channel. The sums stay `u64` and are taken
-/// in the same order as before, so the averages — and therefore the output —
+/// in the same order as before, so the averages, and therefore the output,
 /// are unchanged.
 fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
     let w = frame.width as usize;
@@ -211,7 +227,88 @@ fn pixelate(frame: &mut Frame, r: &Rect, block: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ob_core::censor::RegionShape;
     use ob_core::taxonomy::cat;
+    use std::collections::HashMap;
+
+    /// Resolving a policy and then drawing the boxes must put down exactly the
+    /// pixels that applying the policy directly does.
+    ///
+    /// This is the whole premise of the review flow: the user is shown
+    /// `resolve`'s output, moves it about, and the committed file is
+    /// `apply_boxes`'s output. If the two paths could disagree, a reviewed
+    /// batch would be a reviewed *approximation* of the batch, and the only way
+    /// to notice would be to compare the written file against a screenshot.
+    #[test]
+    fn resolving_then_drawing_equals_drawing_directly() {
+        let mut per_part = HashMap::new();
+        per_part.insert(
+            ob_core::taxonomy::Part::Genitalia,
+            CensorStyle::SolidFill {
+                color: [7, 9, 11, 255],
+            },
+        );
+        let cfg = CensorConfig {
+            default_style: CensorStyle::Pixelate { block: 6 },
+            per_part,
+            // Padding and rounding both on: they are the two things `resolve`
+            // bakes in, and the two a second interpretation could get wrong.
+            shape: RegionShape {
+                padding: 0.22,
+                rounding: 0.3,
+            },
+        };
+        let dets = vec![
+            Detection {
+                bbox: BBox::new(6.0, 8.0, 30.0, 34.0),
+                category: cat::FEMALE_BREAST_EXPOSED,
+                score: 0.9,
+            },
+            Detection {
+                bbox: BBox::new(40.0, 20.0, 60.0, 50.0),
+                category: cat::FEMALE_GENITALIA_EXPOSED,
+                score: 0.8,
+            },
+        ];
+
+        let mut direct = checkerboard(80, 64);
+        apply(&mut direct, &dets, &cfg).unwrap();
+
+        let mut staged = checkerboard(80, 64);
+        let boxes = cfg.resolve(&dets, staged.width_f(), staged.height_f());
+        apply_boxes(&mut staged, &boxes).unwrap();
+
+        assert_eq!(direct.data, staged.data);
+    }
+
+    #[test]
+    fn resolve_bakes_the_padding_in_so_drawing_cannot_apply_it_twice() {
+        let cfg = CensorConfig {
+            shape: RegionShape {
+                padding: 0.5,
+                rounding: 0.0,
+            },
+            ..Default::default()
+        };
+        let det = Detection {
+            bbox: BBox::new(20.0, 20.0, 40.0, 40.0),
+            category: cat::FACE_FEMALE,
+            score: 1.0,
+        };
+        let boxes = cfg.resolve(std::slice::from_ref(&det), 200.0, 200.0);
+        assert_eq!(boxes.len(), 1);
+        // 20 wide grown by half its size per side.
+        assert_eq!(boxes[0].rect, BBox::new(10.0, 10.0, 50.0, 50.0));
+        assert_eq!(boxes[0].category, Some(cat::FACE_FEMALE));
+
+        // Re-resolving a resolved box is the mistake this guards: drawing must
+        // take the rect as final.
+        let mut once = checkerboard(200, 200);
+        apply_boxes(&mut once, &boxes).unwrap();
+        let mut twice = checkerboard(200, 200);
+        apply(&mut twice, std::slice::from_ref(&det), &cfg).unwrap();
+        assert_eq!(once.data, twice.data);
+    }
 
     fn checkerboard(w: u32, h: u32) -> Frame {
         let mut data = vec![0u8; (w * h * 3) as usize];
@@ -263,7 +360,7 @@ mod tests {
     /// can be held to producing identical bytes rather than plausible ones.
     ///
     /// Lints are off here on purpose: the value of this module is that it is a
-    /// transcription. Tidying it — even in ways clippy is right about — would
+    /// transcription. Tidying it, even in ways clippy is right about, would
     /// make it evidence of what someone rewrote rather than of what shipped.
     #[allow(clippy::all)]
     mod reference {
@@ -379,8 +476,8 @@ mod tests {
 
     #[test]
     fn the_rewritten_fills_are_byte_for_byte_the_old_ones() {
-        // These are pure speed rewrites — row slices instead of three indexed
-        // writes per pixel — so anything but exact agreement is a bug.
+        // These are pure speed rewrites, row slices instead of three indexed
+        // writes per pixel, so anything but exact agreement is a bug.
         for (i, r) in random_rects(0x5eed_1234, 40).into_iter().enumerate() {
             let base = noisy(96, 72, 0xabcd_0000 + i as u64);
 
@@ -407,7 +504,7 @@ mod tests {
     fn restricting_rounding_to_the_corners_restores_exactly_the_same_pixels() {
         // The rewrite skips the interior on the argument that the arc-centre
         // snap makes the distance zero there. That argument is what this test
-        // exists to check — if it is wrong anywhere, the interior of a censor
+        // exists to check. If it is wrong anywhere, the interior of a censor
         // box gets its original pixels back, which is a leak.
         for (i, r) in random_rects(0xfeed_9876, 40).into_iter().enumerate() {
             for rounding in [0.05f32, 0.2, 0.35, 0.5] {

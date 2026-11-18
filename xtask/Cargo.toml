@@ -11,7 +11,7 @@ description = "Build-time tasks for Figura Obscura: icon and packaging asset gen
 image = { workspace = true }
 anyhow = { workspace = true }
 # `bench` times these directly. The end-to-end run cannot reach the censor
-# renderers — a detector finds nothing in generated images — so measuring them
+# renderers, because a detector finds nothing in generated images, so measuring them
 # means calling them.
 ob-core = { workspace = true }
 ob-censor = { workspace = true }

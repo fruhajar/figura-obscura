@@ -1,14 +1,15 @@
 //! Estimating how long a batch will take, before it is started.
 //!
-//! The naive estimate — elapsed / files done × files remaining — has two
+//! The naive estimate, elapsed / files done × files remaining, has two
 //! problems. It says nothing at all until the first file finishes, which on a
 //! batch of 4K video is the point at which the user most wants to know; and it
 //! treats every item as equal, so a run of thumbnails followed by a feature
 //! film reports a steadily shrinking ETA that is wrong by an order of
 //! magnitude.
 //!
-//! So the batch is measured first. Each item is probed for its dimensions —
-//! cheap, a header read for images and one `ffprobe` for videos — and costed in
+//! So the batch is measured first. Each item is probed for its dimensions,
+//! which is cheap (a header read for images, one `ffprobe` for videos), and
+//! costed in
 //! **inference passes**, the thing that actually dominates a run.
 //!
 //! Probing and costing are **separate**, for the same reason the preview splits
@@ -42,7 +43,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Video work is not all inference: every frame is decoded, composited and
 /// re-encoded even on the frames the detector skips. This is a rough ratio, not
-/// a measurement — it exists so that a long video at `detect_every = 10` is not
+/// a measurement. It exists so that a long video at `detect_every = 10` is not
 /// costed as though nine tenths of it were free.
 const CODEC_COST_PER_1080P_FRAME: f64 = 0.05;
 
@@ -86,7 +87,7 @@ pub struct CostModel {
     /// Video: the detector runs every Nth frame, the tracker coasts between.
     pub detect_every: u32,
     /// Ensemble size. Every member sees every frame, so two models is twice
-    /// the inference — the single biggest lever a user has on run time.
+    /// the inference, the single biggest lever a user has on run time.
     pub members: usize,
 }
 
@@ -131,7 +132,7 @@ pub enum Sizing {
     UnknownLength,
 }
 
-/// What a file is, as measured. Independent of any setting — this is the half
+/// What a file is, as measured. Independent of any setting: this is the half
 /// that costs I/O, so it is kept across changes to the cost model.
 #[derive(Debug, Clone)]
 pub struct ProbedItem {
@@ -165,7 +166,7 @@ impl ProbedItem {
 pub struct ItemCost {
     pub path: PathBuf,
     pub kind: MediaKind,
-    /// Work units — inference passes, plus the decode term for video.
+    /// Work units: inference passes, plus the decode term for video.
     pub work: f64,
     pub sizing: Sizing,
 }
@@ -175,7 +176,7 @@ pub struct ItemCost {
 pub struct Workload {
     /// Private because it is half of a pair: every item is also indexed by path
     /// in `by_path`, and a caller pushing straight onto the vector would leave
-    /// the two disagreeing — which shows up not as a crash but as a progress
+    /// the two disagreeing, which shows up not as a crash but as a progress
     /// bar that silently stops moving. Read it through [`Workload::items`],
     /// add to it through [`Workload::push`].
     items: Vec<ItemCost>,
@@ -219,7 +220,7 @@ impl Workload {
     ///
     /// Indexed rather than scanned because of where this is called from: once
     /// per finished file, to move the progress bar. A linear search made that
-    /// quadratic in the size of the batch — on the fifty-thousand-image run the
+    /// quadratic in the size of the batch. On the fifty-thousand-image run the
     /// activity log's capacity was chosen for, something like a billion path
     /// comparisons over the run, on the thread drawing the window.
     pub fn work_for(&self, path: &Path) -> Option<f64> {
@@ -259,7 +260,7 @@ pub fn probe_item(item: &MediaItem) -> ProbedItem {
             }
         }
         _ => {
-            // Header read only — `image_dimensions` does not decode the pixels,
+            // Header read only. `image_dimensions` does not decode the pixels,
             // which is what makes scanning tens of thousands of files
             // affordable.
             let (dims, sizing) = match image::image_dimensions(&item.path) {
@@ -285,7 +286,7 @@ pub fn probe_item(item: &MediaItem) -> ProbedItem {
 /// lower bound.
 pub fn probe(items: &[MediaItem], cancel: &CancelToken) -> Vec<ProbedItem> {
     // In parallel because the expensive case is a folder of video, where each
-    // item costs an `ffprobe` subprocess — five hundred clips was five hundred
+    // item costs an `ffprobe` subprocess, so five hundred clips was five hundred
     // spawns end to end, and the user is waiting on the first estimate the
     // whole time. Images cost a header read and barely notice either way.
     //
@@ -299,7 +300,7 @@ pub fn probe(items: &[MediaItem], cancel: &CancelToken) -> Vec<ProbedItem> {
         .collect()
 }
 
-/// Cost an already-probed batch. The pure half — no I/O, safe to call as often
+/// Cost an already-probed batch. The pure half: no I/O, safe to call as often
 /// as a slider moves.
 pub fn cost(probed: &[ProbedItem], model: &CostModel) -> Workload {
     let mut out = Workload::default();
@@ -639,8 +640,8 @@ mod tests {
     fn the_by_path_index_agrees_with_the_list_it_indexes() {
         // `work_for` is called once per finished file to move the progress bar,
         // so it is indexed rather than searched. The index is a second copy of
-        // the same fact, and the failure mode when it drifts is not a crash —
-        // it is a bar that silently stops moving — so it is pinned here.
+        // the same fact, and the failure mode when it drifts is not a crash
+        // but a bar that silently stops moving, so it is pinned here.
         let dir = tmp("index");
         let items: Vec<MediaItem> = ["a.png", "b.png", "c.png"]
             .iter()

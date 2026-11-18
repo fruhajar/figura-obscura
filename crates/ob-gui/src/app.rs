@@ -2,7 +2,7 @@
 //! loop that drives the pages.
 //!
 //! The window is a left nav rail, a page, and a persistent status bar carrying
-//! the primary action. Everything slow — inference, downloads, video encoding —
+//! the primary action. Everything slow (inference, downloads, video encoding)
 //! happens on worker threads (`run`, `downloads`); `update` only drains their
 //! channels and draws.
 
@@ -33,8 +33,8 @@ const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
 /// A fingerprint of everything a preview depends on, split by what it costs to
 /// react to.
 ///
-/// `detect` covers the source file, the model and its settings — changing any
-/// of those means running inference again. `compose` covers the filter, the
+/// `detect` covers the source file, the model and its settings, so changing
+/// any of those means running inference again. `compose` covers the filter, the
 /// censor styles and the fail-closed policy, which only re-paint an already
 /// detected frame. Keeping them apart is what makes tuning a censor style feel
 /// instant while changing the confidence threshold honestly costs a re-detect.
@@ -76,7 +76,7 @@ fn inputs_key(inputs: &[PathBuf]) -> u64 {
 pub enum PreviewNext {
     /// Up to date, or waiting on something else.
     Idle,
-    /// The settings are still moving — come back after this long.
+    /// The settings are still moving, so come back after this long.
     Wait(Duration),
     /// Start a job for these keys.
     Start(PreviewKeys),
@@ -85,7 +85,7 @@ pub enum PreviewNext {
 /// The debounce behind the live preview.
 ///
 /// Kept as pure state with the clock passed in, so the timing rules can be
-/// tested without a model, a display server, or a worker thread — none of which
+/// tested without a model, a display server, or a worker thread, none of which
 /// the build container has.
 #[derive(Default)]
 pub struct PreviewSchedule {
@@ -142,7 +142,7 @@ impl PreviewSchedule {
     }
 
     /// Forget what has been rendered, so the next poll re-renders. Used when
-    /// something outside the fingerprint changed — a model was installed, or
+    /// something outside the fingerprint changed: a model was installed, or
     /// the user asked for a fresh look at a file that may have changed on disk.
     pub fn invalidate(&mut self) {
         self.done = None;
@@ -185,7 +185,7 @@ pub struct PreviewView {
 ///
 /// Every field here used to be recomputed inside the row loop: two `stat`
 /// calls, a GIF header decode and two `String` allocations per row, sixty times
-/// a second. That is a model question — "what is this file?" — answered in the
+/// a second. That is a model question ("what is this file?") answered in the
 /// view, so the cost scaled with the length of the batch rather than with what
 /// the batch was doing. Answered once per change to the list, it costs nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,11 +251,35 @@ impl From<ob_media::MediaKind> for RowKind {
     }
 }
 
+/// The Batch page's two halves.
+///
+/// A sub-tab rather than a sixth entry in the nav rail: queueing a batch and
+/// reviewing its results are two steps of one job, and the second one only
+/// exists because the first was run. The page switches to Review by itself when
+/// a detect pass lands, which is the moment the work actually moves there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BatchTab {
+    #[default]
+    Queue,
+    Review,
+}
+
+impl BatchTab {
+    pub const ALL: [BatchTab; 2] = [BatchTab::Queue, BatchTab::Review];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BatchTab::Queue => "Queue",
+            BatchTab::Review => "Review",
+        }
+    }
+}
+
 pub struct ObApp {
     pub prefs: Prefs,
     /// Effective settings for the selected model (defaults layered with edits).
     pub settings: SettingValues,
-    /// The registry, resolved once — it allocates a `Vec<Setting>` per entry,
+    /// The registry, resolved once. It allocates a `Vec<Setting>` per entry,
     /// which is not something to redo sixty times a second.
     pub registry: Vec<ModelEntry>,
 
@@ -293,15 +317,27 @@ pub struct ObApp {
     pub probed_key: Option<u64>,
 
     /// The manual editor's page state: the open image, its hand-drawn boxes and
-    /// their undo history. Deliberately not persisted — a document is one
+    /// their undo history. Deliberately not persisted: a document is one
     /// image's worth of work, finished when it is saved.
     pub editor: crate::edit::EditorState,
 
     pub toast: Option<Toast>,
     /// ffmpeg/ffprobe that could not be run, checked once at startup.
     pub missing_tools: Vec<Tool>,
+    /// The two-phase batch, once one has been started. `None` is the ordinary
+    /// detect-and-write run.
+    pub review: Option<crate::review::ReviewSession>,
+    /// Which half of the Batch page is on screen.
+    pub batch_tab: BatchTab,
     /// True until first-run setup is finished or dismissed.
     pub show_setup: bool,
+    /// What the desktop reports its own light/dark preference to be, or `None`
+    /// where the platform does not say. Read every frame, because it can change
+    /// under a running app.
+    pub system_dark: Option<bool>,
+    /// The scheme currently pushed into egui's `Style`, so the push happens on
+    /// a change rather than on every frame.
+    applied_scheme: Option<(crate::theme::Accent, bool)>,
 }
 
 impl Default for ObApp {
@@ -362,7 +398,11 @@ impl Default for ObApp {
             editor: crate::edit::EditorState::default(),
             toast: None,
             missing_tools: ob_media::tools::missing_tools(),
+            review: None,
+            batch_tab: BatchTab::Queue,
             show_setup,
+            system_dark: None,
+            applied_scheme: None,
         }
     }
 }
@@ -389,6 +429,13 @@ impl ObApp {
         self.run.is_some()
     }
 
+    /// A detect pass has landed and is waiting to be written.
+    pub fn review_is_ready(&self) -> bool {
+        self.review
+            .as_ref()
+            .is_some_and(|r| r.phase == crate::review::ReviewPhase::Ready && !r.is_empty())
+    }
+
     /// Whether the selected model's weights are on disk.
     pub fn model_ready(&self) -> bool {
         self.downloads.is_installed(&self.prefs.profile.model_id)
@@ -412,7 +459,7 @@ impl ObApp {
     /// `self.registry`. The Models page moves its copy out of the app for the
     /// duration of its card loop, so that each card can take `&mut app`; a
     /// lookup against `self.registry` would find nothing there and this would
-    /// silently do nothing — which is exactly what "Use this model" did before.
+    /// silently do nothing, which is exactly what "Use this model" did before.
     pub fn select_model(&mut self, id: &str) {
         if self.prefs.profile.model_id == id {
             return;
@@ -428,7 +475,7 @@ impl ObApp {
         // would silently come back if the primary were switched away again.
         self.prefs.extra_models.retain(|x| x != id);
         // The old preview's detections came from a different model. The image
-        // stays on screen — the auto pass replaces it in a moment, and a panel
+        // stays on screen: the auto pass replaces it in a moment, and a panel
         // that blanks on every model switch is harder to compare against.
         self.preview_cache = None;
         self.preview_schedule.invalidate();
@@ -456,7 +503,7 @@ impl ObApp {
         }
         if !self.model_ready() {
             return Some(format!(
-                "The model `{}` is not installed — get it on the Models page.",
+                "The model `{}` is not installed. Get it on the Models page.",
                 self.prefs.profile.model_id
             ));
         }
@@ -480,14 +527,31 @@ impl ObApp {
         // Hand the run the measurement and this machine's rate, so the ETA is
         // there from the first frame rather than after the first file.
         self.run_state = RunState::starting(self.workload().map(Arc::new), self.calibration());
-        self.run = Some(RunHandle::spawn(
-            &self.prefs.profile,
-            &self.settings,
-            &self.ensemble_spec(),
-            self.inputs.clone(),
-            output_dir,
-            self.prefs.detect_every,
-        ));
+        self.run = Some(if self.prefs.review_mode {
+            // A fresh session: the old one's edits belong to a batch that has
+            // already been written, and carrying them over would silently apply
+            // one batch's corrections to another's files.
+            self.review = Some(crate::review::ReviewSession::detecting());
+            self.editor = crate::edit::EditorState::default();
+            RunHandle::spawn_detect(
+                &self.prefs.profile,
+                &self.settings,
+                &self.ensemble_spec(),
+                self.inputs.clone(),
+                output_dir,
+                self.prefs.detect_every,
+            )
+        } else {
+            self.review = None;
+            RunHandle::spawn(
+                &self.prefs.profile,
+                &self.settings,
+                &self.ensemble_spec(),
+                self.inputs.clone(),
+                output_dir,
+                self.prefs.detect_every,
+            )
+        });
         self.prefs.tab = Tab::Queue;
     }
 
@@ -501,7 +565,7 @@ impl ObApp {
     /// The file the preview renders: an explicit pick, else the first input
     /// that is actually a file.
     ///
-    /// Directories are skipped rather than previewed-and-failed — a batch is
+    /// Directories are skipped rather than previewed-and-failed. A batch is
     /// very often a single folder, and "that is a directory" is a useless thing
     /// to tell someone who asked to see a preview.
     pub fn preview_path(&self) -> Option<PathBuf> {
@@ -598,7 +662,7 @@ impl ObApp {
     /// Correct the row glyphs from the scan that has just landed.
     ///
     /// The only case that moves is `.gif`, which is two formats wearing one
-    /// extension — the scan opened the file and knows which. Doing it here
+    /// extension, and the scan opened the file and knows which. Doing it here
     /// rather than in [`InputRow::probe`] keeps the decode off the UI thread.
     fn refine_rows(&mut self) {
         let Some(probed) = self.probed.as_ref() else {
@@ -631,7 +695,7 @@ impl ObApp {
     /// Explicitly asked for: always re-runs inference.
     ///
     /// The automatic path reuses cached detections wherever it can, but a
-    /// deliberate press means "look again" — the file on disk may have changed
+    /// deliberate press means "look again": the file on disk may have changed
     /// under us, and that is the only way to find out.
     pub fn start_preview(&mut self) {
         let Some(input) = self.preview_path() else {
@@ -716,12 +780,46 @@ impl ObApp {
 
     // --- per-frame plumbing ---------------------------------------------
 
+    /// Keep egui's `Style` in step with the chosen colour scheme.
+    ///
+    /// Called before anything draws, and cheap when nothing changed: installing
+    /// a style clones and replaces the whole thing, which is not something to do
+    /// sixty times a second for an answer that only moves when the user clicks a
+    /// swatch, or when the desktop flips to night mode under a running window,
+    /// which is why the system preference is re-read each frame rather than at
+    /// startup.
+    pub fn apply_scheme(&mut self, ctx: &egui::Context) {
+        self.system_dark = ctx.system_theme().map(|t| t == egui::Theme::Dark);
+        let dark = self.prefs.theme.is_dark(self.system_dark);
+        let scheme = (self.prefs.accent, dark);
+        if self.applied_scheme != Some(scheme) {
+            self.applied_scheme = Some(scheme);
+            theme::set_scheme(scheme.0, scheme.1);
+            theme::install(ctx);
+        }
+    }
+
     fn pump_run(&mut self) {
         let Some(run) = &self.run else { return };
         let alive = run.pump(&mut self.run_state);
         if !alive {
             let output = run.output_dir.clone();
+            let phase = run.phase;
+            let found = run.take_review();
             self.run = None;
+
+            match phase {
+                crate::run::Phase::Detect => {
+                    self.finish_detect(found);
+                    return;
+                }
+                crate::run::Phase::Commit => {
+                    if let Some(s) = self.review.as_mut() {
+                        s.phase = crate::review::ReviewPhase::Done;
+                    }
+                }
+                crate::run::Phase::Direct => {}
+            }
             // Keep what this machine actually managed, so the next batch can be
             // estimated before it starts instead of after its first file.
             if self.run_state.calibration.is_measured() {
@@ -737,17 +835,57 @@ impl ObApp {
                 }
                 Some(f) if f.failed > 0 => {
                     self.toast(
-                        format!("Finished with {} error(s) — see the log.", f.failed),
+                        format!("Finished with {} error(s). See the log.", f.failed),
                         ToastKind::Error,
                     );
                 }
                 Some(f) => {
                     self.toast(
-                        format!("Done — {} file(s) written to {}", f.ok, output.display()),
+                        format!("Done. {} file(s) written to {}", f.ok, output.display()),
                         ToastKind::Success,
                     );
                 }
                 None => {}
+            }
+        }
+    }
+
+    /// Turn a finished detect pass into a review, and go to it.
+    fn finish_detect(&mut self, found: Option<ob_job::review::Review>) {
+        let cancelled = self
+            .run_state
+            .finished
+            .as_ref()
+            .is_some_and(|f| f.cancelled);
+        match found {
+            // A cancelled pass has looked at only part of the batch, and
+            // committing it would write the rest uncensored. It is discarded
+            // rather than offered as a partial review.
+            Some(_) if cancelled => {
+                self.review = None;
+                self.toast("Stopped. Nothing was written.", ToastKind::Info);
+            }
+            Some(review) => {
+                let regions = review.region_count();
+                let clean = review.clean_count();
+                let session = crate::review::ReviewSession::new(review);
+                let empty = session.is_empty();
+                self.review = Some(session);
+                self.batch_tab = BatchTab::Review;
+                if empty {
+                    self.toast("Nothing in the batch could be processed.", ToastKind::Error);
+                } else {
+                    self.toast(
+                        format!(
+                            "Found {regions} region(s). {clean} file(s) had none, so check those before writing."
+                        ),
+                        ToastKind::Info,
+                    );
+                }
+            }
+            None => {
+                self.review = None;
+                self.toast("The detection pass did not finish.", ToastKind::Error);
             }
         }
     }
@@ -901,15 +1039,23 @@ impl ObApp {
         // Progress first: while a run is going it is the most important thing
         // in the window.
         if self.is_running() {
+            // Naming the pass matters once there are two of them: "detecting"
+            // and "writing" take comparable time and look identical from a
+            // progress bar, and only one of them is producing files.
+            let verb = self
+                .run
+                .as_ref()
+                .map(|r| r.phase.verb())
+                .unwrap_or("Running");
             let text = match (self.run_state.total, self.run_state.eta_secs()) {
                 (0, _) => "scanning inputs…".to_string(),
                 (total, Some(eta)) => format!(
-                    "{}/{} · {} left",
+                    "{verb} · {}/{} · {} left",
                     self.run_state.done,
                     total,
                     crate::downloads::human_eta(eta)
                 ),
-                (total, None) => format!("{}/{}", self.run_state.done, total),
+                (total, None) => format!("{verb} · {}/{}", self.run_state.done, total),
             };
             let bar = match self.run_state.fraction() {
                 Some(f) => egui::ProgressBar::new(f).text(text),
@@ -924,9 +1070,43 @@ impl ObApp {
                 if theme::danger_button(ui, "Stop", true).clicked() {
                     self.cancel_run();
                 }
+            } else if self.review_is_ready() {
+                // A review in hand changes what the primary action *is*: the
+                // batch is half-run, and the only thing left is to write it.
+                // Offering "Run batch" here would throw away the review the
+                // user is standing in.
+                let count = self
+                    .review
+                    .as_ref()
+                    .map(|r| {
+                        r.review
+                            .items
+                            .iter()
+                            .filter(|i| crate::pages::review::committable(i))
+                            .count()
+                    })
+                    .unwrap_or(0);
+                if theme::primary_button(ui, &format!("Write {count} file(s)"), count > 0).clicked()
+                {
+                    crate::pages::review::commit(self);
+                }
+                if ui
+                    .button("Discard")
+                    .on_hover_text("Throw the review away without writing anything.")
+                    .clicked()
+                {
+                    self.review = None;
+                    self.editor = crate::edit::EditorState::default();
+                    self.toast("Review discarded. Nothing written.", ToastKind::Info);
+                }
             } else {
                 let blocker = self.run_blocker();
-                let resp = theme::primary_button(ui, "Run batch", blocker.is_none());
+                let label = if self.prefs.review_mode {
+                    "Detect for review"
+                } else {
+                    "Run batch"
+                };
+                let resp = theme::primary_button(ui, label, blocker.is_none());
                 if resp.clicked() {
                     self.start_run();
                 }
@@ -1111,10 +1291,12 @@ impl ObApp {
     /// "does the UI lay out at all" is worth having under test rather than
     /// discovering on a user's machine.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        self.apply_scheme(ctx);
         self.pump_run();
         self.pump_estimate();
         self.pump_preview(ctx);
         self.pump_auto_preview(ctx);
+        crate::pages::review::sync_canvas(self);
         self.handle_dropped_files(ctx);
         let registry = std::mem::take(&mut self.registry);
         self.downloads.pump(&registry);
@@ -1177,6 +1359,7 @@ impl ObApp {
                     Tab::Tuning => crate::pages::tuning::show(self, ui),
                     Tab::Edit => crate::pages::editor::show(self, ui),
                     Tab::Models => crate::pages::models::show(self, ui),
+                    Tab::Settings => crate::pages::settings::show(self, ui),
                     Tab::About => crate::pages::about::show(self, ui),
                 }
             });
@@ -1187,16 +1370,15 @@ impl ObApp {
 pub(crate) mod tests {
     use super::*;
     use crate::prefs::Tab;
-    use std::sync::{Mutex, MutexGuard};
-
-    /// `OBSCURA_CONFIG_DIR`/`OBSCURA_MODEL_DIR` are process-global but tests run in
-    /// parallel threads, so constructing an app must be serialised or one test
-    /// reads another's directories.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::theme::testing::UiGuard;
 
     /// A temp directory that cleans itself up even if the test panics.
     pub(crate) struct TestDir {
-        _lock: MutexGuard<'static, ()>,
+        /// The process-global UI lock: the model/config directories *and* the
+        /// active colour scheme are global, and a test that rendered while
+        /// another changed the scheme under it would write a screenshot of a
+        /// palette it never asked for.
+        _lock: UiGuard,
         path: PathBuf,
     }
 
@@ -1209,8 +1391,8 @@ pub(crate) mod tests {
 
     impl Drop for TestDir {
         fn drop(&mut self) {
-            std::env::remove_var("OBSCURA_CONFIG_DIR");
-            std::env::remove_var("OBSCURA_MODEL_DIR");
+            // The environment and the scheme are put back by `UiGuard`, which
+            // drops after this.
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
@@ -1218,13 +1400,21 @@ pub(crate) mod tests {
     /// Build an app against a private config directory so tests never read or
     /// write the developer's real settings.
     pub(crate) fn test_app(name: &str) -> (ObApp, TestDir) {
-        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = crate::theme::testing::lock();
         let path = std::env::temp_dir().join(format!("ob-app-test-{name}"));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         std::env::set_var("OBSCURA_CONFIG_DIR", &path);
         std::env::set_var("OBSCURA_MODEL_DIR", path.join("models"));
-        let app = ObApp::default();
+        let mut app = ObApp::default();
+        // `ObApp::default` asks the machine whether ffmpeg is installed, and on
+        // one that has none the tool banner claims a block of height above every
+        // page. That moved the Edit canvas out from under the fixed coordinates
+        // its drag tests press at, so six of them passed on a dev box and failed
+        // on a CI runner, where ffmpeg is never installed. The layout a test
+        // sees has to be the layout the test asked for; the two cases that want
+        // the banner set `missing_tools` themselves.
+        app.missing_tools.clear();
         (app, TestDir { _lock: lock, path })
     }
 
@@ -1246,6 +1436,148 @@ pub(crate) mod tests {
             app.prefs.tab = tab;
             draw(&mut app, 2);
         }
+    }
+
+    /// A review session over real files on disk, so the canvas can decode them.
+    pub(super) fn fake_review(dir: &Path) -> crate::review::ReviewSession {
+        use ob_core::geometry::{BBox, Detection};
+        use ob_job::review::{Review, ReviewFrame, ReviewItem};
+
+        // A gradient rather than a blank: a screenshot of this page is meant to
+        // show what censoring a picture looks like, and a black rectangle
+        // covered by a black rectangle shows nothing at all.
+        let item = |name: &str, dets: Vec<Detection>| {
+            let path = dir.join(name);
+            let (w, h) = (320u32, 240u32);
+            let mut img = image::RgbImage::new(w, h);
+            for (x, y, px) in img.enumerate_pixels_mut() {
+                let v = ((x * 255 / w) + (y * 255 / h)) / 2;
+                *px = image::Rgb([v as u8, (160 - v.min(160)) as u8, 190]);
+            }
+            img.save(&path).unwrap();
+            ReviewItem {
+                output: dir.join("out").join(name),
+                path,
+                kind: ob_media::MediaKind::Image,
+                width: 320,
+                height: 240,
+                frames: vec![ReviewFrame {
+                    index: 0,
+                    detections: dets,
+                }],
+                detect_every: 3,
+                frame_count: None,
+                error: None,
+            }
+        };
+        let det = |x: f32| Detection {
+            bbox: BBox::new(x, 60.0, x + 70.0, 170.0),
+            category: ob_core::taxonomy::cat::FEMALE_BREAST_EXPOSED,
+            score: 0.86,
+        };
+        crate::review::ReviewSession::new(Review {
+            items: vec![
+                item("beach-01.png", vec![det(40.0), det(170.0)]),
+                item("beach-02.png", vec![]),
+                item("beach-03.png", vec![det(120.0)]),
+            ],
+        })
+    }
+
+    #[test]
+    fn the_review_tab_lays_out_in_every_phase() {
+        use crate::review::ReviewPhase;
+        let (mut app, dir) = test_app("review-phases");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Queue;
+        app.batch_tab = BatchTab::Review;
+
+        // Nothing started yet: the tab explains itself rather than being blank.
+        draw(&mut app, 2);
+
+        app.review = Some(fake_review(&dir));
+        for phase in [
+            ReviewPhase::Detecting,
+            ReviewPhase::Ready,
+            ReviewPhase::Committing,
+            ReviewPhase::Done,
+        ] {
+            app.review.as_mut().unwrap().phase = phase;
+            draw(&mut app, 2);
+        }
+    }
+
+    #[test]
+    fn opening_a_review_puts_the_detections_on_the_canvas() {
+        let (mut app, dir) = test_app("review-canvas");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Queue;
+        app.batch_tab = BatchTab::Review;
+        app.review = Some(fake_review(&dir));
+        draw(&mut app, 2);
+
+        // The first item's two detections became two editable boxes, and the
+        // canvas is in the mode that resolves style from the profile.
+        assert_eq!(app.editor.mode, crate::edit::CanvasMode::Review);
+        assert_eq!(app.editor.doc().boxes.len(), 2);
+        assert!(app.editor.source.is_some());
+        assert_eq!(app.review.as_ref().unwrap().loaded, Some((0, 0)));
+    }
+
+    #[test]
+    fn an_edit_on_the_canvas_reaches_the_review_that_gets_committed() {
+        // The whole path in one test: load an item, change it, navigate away
+        // (which flushes), and confirm the stored geometry moved. This is the
+        // step where a dropped edit would be invisible until the file was
+        // written.
+        let (mut app, dir) = test_app("review-flush");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Queue;
+        app.batch_tab = BatchTab::Review;
+        app.review = Some(fake_review(&dir));
+        draw(&mut app, 2);
+
+        let id = app.editor.doc().boxes[0].id;
+        app.editor.delete(id);
+        app.editor
+            .add_box(ob_core::geometry::BBox::new(10.0, 10.0, 60.0, 60.0));
+
+        let editor = std::mem::take(&mut app.editor);
+        app.review.as_mut().unwrap().step_item(&editor, true);
+        app.editor = editor;
+
+        let stored = &app.review.as_ref().unwrap().review.items[0];
+        assert_eq!(
+            stored.region_count(),
+            2,
+            "the edit never reached the review"
+        );
+        // The box drawn by hand carries the reserved category, not a body part
+        // it was never classified as.
+        assert!(stored.frames[0]
+            .detections
+            .iter()
+            .any(|d| d.category == ob_job::review::MANUAL));
+        assert_eq!(app.review.as_ref().unwrap().edited_count(), 1);
+    }
+
+    #[test]
+    fn a_cancelled_detect_pass_is_discarded_rather_than_offered() {
+        // Committing half a detect pass would write the unexamined remainder
+        // uncensored, which is the one outcome this feature exists to prevent.
+        let (mut app, dir) = test_app("review-cancelled");
+        app.show_setup = false;
+        app.review = Some(crate::review::ReviewSession::detecting());
+        app.run_state.finished = Some(crate::run::Finished {
+            ok: 1,
+            failed: 0,
+            cancelled: true,
+            elapsed_secs: 1.0,
+        });
+        let partial = fake_review(&dir).review;
+        app.finish_detect(Some(partial));
+        assert!(app.review.is_none());
+        assert!(!app.review_is_ready());
     }
 
     #[test]
@@ -1313,7 +1645,7 @@ pub(crate) mod tests {
     fn select_model_works_while_the_registry_is_borrowed_out() {
         // The Models page moves `registry` out of the app for the duration of
         // its loop (so each card can take `&mut app`). A `select_model` that
-        // looked the id up in `self.registry` would silently do nothing there —
+        // looked the id up in `self.registry` would silently do nothing there:
         // clicking "Use this model" would appear to be ignored.
         let (mut app, _dir) = test_app("taken-registry");
         let taken = std::mem::take(&mut app.registry);
@@ -1374,8 +1706,8 @@ pub(crate) mod tests {
         assert!(matches!(sched.poll(k, false, t0), PreviewNext::Wait(_)));
         assert_eq!(sched.poll(k, false, fire), PreviewNext::Start(k));
         sched.started(Some(k));
-        // While it runs, and after it lands, the same settings are left alone —
-        // otherwise the preview would loop on itself forever.
+        // While it runs, and after it lands, the same settings are left alone,
+        // because otherwise the preview would loop on itself forever.
         assert_eq!(sched.poll(k, true, fire), PreviewNext::Idle);
         assert_eq!(sched.finished(), Some(k));
         assert_eq!(sched.poll(k, false, fire), PreviewNext::Idle);
@@ -1416,7 +1748,8 @@ pub(crate) mod tests {
         // Debounced, then held back only because a job is in flight.
         assert!(matches!(sched.poll(k2, true, t0), PreviewNext::Wait(_)));
         assert_eq!(sched.poll(k2, true, t1), PreviewNext::Idle);
-        // The moment it lands, the newer state is picked up — no extra input
+        // The moment it lands, the newer state is picked up, with no extra
+        // input
         // from the user needed to un-stick it.
         sched.finished();
         assert_eq!(sched.poll(k2, false, t1), PreviewNext::Start(k2));
@@ -1469,7 +1802,7 @@ pub(crate) mod tests {
         let after = app.preview_keys().expect("keys");
 
         // Adding a model changes which regions exist at all, so it belongs to
-        // the expensive half — re-painting the cached detections would show a
+        // the expensive half: re-painting the cached detections would show a
         // preview the batch would not reproduce.
         assert_ne!(before.detect, after.detect);
         assert_eq!(before.compose, after.compose);
@@ -1563,7 +1896,7 @@ pub(crate) mod tests {
         assert_eq!(one.images, 1);
         assert!(one.total_work > 0.0);
 
-        // A second, much smaller file must change the total — and must trigger
+        // A second, much smaller file must change the total, and must trigger
         // a fresh scan, since a measurement of the previous batch would be
         // worse than none at all.
         app.inputs.push(write_png(&dir, "b.png", 64, 64));
@@ -1720,7 +2053,7 @@ mod screenshots {
     /// A synthetic photo: a diagonal gradient with a finely striped patch where
     /// the "detection" is.
     ///
-    /// The stripes matter — pixelating a flat colour is a no-op, so a blank
+    /// The stripes matter: pixelating a flat colour is a no-op, so a blank
     /// patch would make every censor style look like it did nothing, which is
     /// the opposite of what the screenshot is for.
     fn sample_frame(w: u32, h: u32) -> ob_core::geometry::Frame {
@@ -1749,7 +2082,7 @@ mod screenshots {
     ///
     /// Built through `ob_job::preview_compose` rather than by painting a
     /// rectangle, so the screenshot shows the censor styles as they will
-    /// actually appear — the point of looking at it at all.
+    /// actually appear, which is the point of looking at it at all.
     fn install_preview(app: &mut super::ObApp, ctx: &egui::Context) {
         let (w, h) = (520u32, 340u32);
         let src = ob_job::PreviewSource {
@@ -1786,7 +2119,7 @@ mod screenshots {
         let painted = canvas.painted_fraction(clear);
         assert!(
             painted > min_painted,
-            "{name}: only {:.1}% of the window was painted — the UI did not render",
+            "{name}: only {:.1}% of the window was painted, so the UI did not render",
             painted * 100.0
         );
 
@@ -2009,6 +2342,61 @@ mod screenshots {
         app.show_setup = false;
         app.prefs.tab = Tab::About;
         shoot("06-about", &mut app);
+    }
+
+    /// The Settings page, in the scheme it opens in.
+    #[test]
+    fn render_settings() {
+        let (mut app, _dir) = test_app("shot-settings");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Settings;
+        shoot("13-settings", &mut app);
+    }
+
+    /// The same page with the light scheme in force.
+    ///
+    /// The scheme is pushed before the shot as well as set in the prefs: the
+    /// clear colour is sampled before the first layout pass installs anything,
+    /// so without this the window would be cleared to the dark background and
+    /// painted light over it.
+    #[test]
+    fn render_settings_light() {
+        let (mut app, _dir) = test_app("shot-settings-light");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Settings;
+        app.prefs.theme = crate::prefs::ThemeMode::Light;
+        theme::set_scheme(app.prefs.accent, false);
+        shoot("14-settings-light", &mut app);
+    }
+
+    /// A page of real content in the light scheme.
+    ///
+    /// The Settings page is where the scheme is chosen, but Tuning is where the
+    /// palette is actually worked: every card, hint, slider rail and section
+    /// label the app owns is on this one screen, which makes it the shot worth
+    /// looking at when the light neutrals move.
+    #[test]
+    fn render_tuning_light() {
+        let (mut app, _dir) = test_app("shot-tuning-light");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Tuning;
+        app.prefs.theme = crate::prefs::ThemeMode::Light;
+        app.prefs.accent = crate::theme::Accent::Teal;
+        theme::set_scheme(app.prefs.accent, false);
+        shoot("15-tuning-light", &mut app);
+    }
+
+    /// The Review tab mid-walk: the batch summary, the file list, and a
+    /// detected region on the canvas with its coverage outline.
+    #[test]
+    fn render_review() {
+        let (mut app, dir) = test_app("shot-review");
+        app.show_setup = false;
+        app.prefs.tab = Tab::Queue;
+        app.prefs.review_mode = true;
+        app.batch_tab = super::BatchTab::Review;
+        app.review = Some(super::tests::fake_review(&dir));
+        shoot("16-review", &mut app);
     }
 
     #[test]

@@ -92,7 +92,7 @@ install -m 0755 "$release/obscura-gui$exe_suffix" "$stage/obscura-gui$exe_suffix
 
 # GPU execution providers are separate shared libraries. The CPU ONNX Runtime is
 # linked *statically* into both binaries, so a --gpu none build ships nothing
-# extra — and must not, because the CUDA and TensorRT providers alone are around
+# extra, and must not, because the CUDA and TensorRT providers alone are around
 # a gigabyte and are dead weight without a CUDA build.
 #
 # Two traps here, both hit in practice:
@@ -101,7 +101,7 @@ install -m 0755 "$release/obscura-gui$exe_suffix" "$stage/obscura-gui$exe_suffix
 #     an earlier build on another machine is skipped rather than aborting the
 #     build; `install` dereferences, so real files are what get staged.
 #   * The symlinks are present even for a CPU build, so their existence is not
-#     evidence that a GPU build was requested — the flag is.
+#     evidence that a GPU build was requested. The flag is.
 #
 # Not every GPU build names its libraries the same way. CUDA ships
 # `libonnxruntime_providers_{cuda,shared,tensorrt}.so`, but WebGPU ships
@@ -147,7 +147,7 @@ if [[ -n "$ffmpeg_dir" ]]; then
     done
     # The bundled binary's licence text must travel with it. A hard failure,
     # not a warning: the omission is invisible in the finished artifact, so
-    # nothing downstream ever catches it — which is exactly how a release can
+    # nothing downstream ever catches it, which is exactly how a release can
     # go out noncompliant.
     if $allow_gpl; then
         licence_file="GPL-2.0.txt"
@@ -174,7 +174,7 @@ else
     # A supported configuration, not a broken one: Obscura finds a user-installed
     # ffmpeg on PATH and, when it cannot, tells the user how to install one.
     # Shipping no ffmpeg carries no redistribution obligations at all.
-    echo "note: no --ffmpeg DIR given — the build will use the user's own ffmpeg." >&2
+    echo "note: no --ffmpeg DIR given, so the build will use the user's own ffmpeg." >&2
 fi
 
 # --- 4. docs and assets -----------------------------------------------------

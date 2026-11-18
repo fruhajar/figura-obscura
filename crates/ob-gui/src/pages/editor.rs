@@ -1,7 +1,7 @@
 //! The Edit page: censor one image by hand.
 //!
 //! The detector is the whole point of the product, but it is not always right
-//! and it is not always what is wanted — a frame it missed, a licence plate or
+//! and it is not always what is wanted: a frame it missed, a licence plate or
 //! a face no model here is trained to find, one region of a hundred that needs
 //! a different treatment. This page is the manual fallback: load an image, drag
 //! boxes over it, give each one a style, save the result.
@@ -373,7 +373,12 @@ fn boxes_card(app: &mut ObApp, ui: &mut egui::Ui) {
 
 // --- the canvas ---------------------------------------------------------
 
-fn canvas(app: &mut ObApp, ui: &mut egui::Ui) {
+/// The drawing surface, shared with the review page.
+///
+/// Review reaches it through here rather than through a copy: the drag,
+/// resize, multi-select and undo behaviour of a box has to be the same thing in
+/// both places, and two implementations of that would be two sets of bugs.
+pub(crate) fn canvas(app: &mut ObApp, ui: &mut egui::Ui) {
     let p = theme::palette();
     let Some(img) = app.editor.image_size() else {
         empty_state(app, ui);
@@ -388,7 +393,7 @@ fn canvas(app: &mut ObApp, ui: &mut egui::Ui) {
     // Input before paint, so a drag draws at the pointer rather than one frame
     // behind it.
     interact(app, ui, &resp, view, img);
-    paint(app, ui, rect, view);
+    paint(app, ui, rect, view, img);
 
     // The gesture that just finished changed the document after this frame's
     // composite was skipped, so ask for the frame that will catch it up. An
@@ -402,7 +407,11 @@ fn canvas(app: &mut ObApp, ui: &mut egui::Ui) {
         ui.painter_at(rect).text(
             rect.center_bottom() - Vec2::new(0.0, 14.0),
             Align2::CENTER_BOTTOM,
-            "Drag to draw a censor box",
+            if app.editor.mode == edit::CanvasMode::Review {
+                "Nothing was detected here. Drag to cover something the model missed"
+            } else {
+                "Drag to draw a censor box"
+            },
             FontId::proportional(12.5),
             p.text_faint,
         );
@@ -450,7 +459,8 @@ fn refresh_composite(app: &mut ObApp, ctx: &egui::Context) {
     if busy && app.editor.texture.is_some() {
         return;
     }
-    match app.editor.composite() {
+    let profile = app.prefs.profile.clone();
+    match app.editor.composite(&profile) {
         Some(Ok(frame)) => {
             let image = crate::app::color_image(&frame);
             match &mut app.editor.texture {
@@ -464,7 +474,7 @@ fn refresh_composite(app: &mut ObApp, ctx: &egui::Context) {
         }
         Some(Err(e)) => {
             // Mark the attempt spent as well as reporting it: a document that
-            // will not render — an overlay image that has gone missing, say —
+            // will not render, an overlay image that has gone missing say,
             // must not be retried on every frame forever.
             app.editor.error = Some(e.to_string());
             app.editor.rendered = Some(key);
@@ -590,7 +600,7 @@ fn interact(app: &mut ObApp, ui: &egui::Ui, resp: &egui::Response, view: View, i
     }
 }
 
-fn paint(app: &ObApp, ui: &egui::Ui, rect: Rect, view: View) {
+fn paint(app: &ObApp, ui: &egui::Ui, rect: Rect, view: View, img: Vec2) {
     let p = theme::palette();
     let painter = ui.painter_at(rect);
     // A ground behind the image, so a letterboxed picture reads as a canvas
@@ -605,9 +615,24 @@ fn paint(app: &ObApp, ui: &egui::Ui, rect: Rect, view: View) {
         );
     }
 
+    let review = app.editor.mode == edit::CanvasMode::Review;
+    let padding = app.prefs.profile.censor.shape.padding;
+
     for b in &app.editor.doc().boxes {
         let r = view.to_screen(&b.rect).intersect(view.rect);
         let selected = app.editor.is_selected(b.id);
+        // Reviewing, the solid outline is the *detection* and the pixels that
+        // actually get covered are it grown by the profile's padding. Drawing
+        // only one of the two would make either the handles or the coverage a
+        // lie, so both are drawn and the dashed one is the coverage.
+        if review && padding > 0.0 && b.visible {
+            let grown = b.rect.expanded(padding, img.x, img.y);
+            painter.rect_stroke(
+                view.to_screen(&grown).intersect(view.rect),
+                Rounding::ZERO,
+                Stroke::new(1.0_f32, p.accent.gamma_multiply(0.45)),
+            );
+        }
         let color = match (selected, b.visible) {
             (true, _) => p.accent,
             (false, true) => p.accent_hover.gamma_multiply(0.85),
@@ -684,7 +709,7 @@ pub fn load(app: &mut ObApp, path: PathBuf) {
 }
 
 fn save_dialog(app: &mut ObApp) {
-    let Some(Ok(frame)) = app.editor.composite() else {
+    let Some(Ok(frame)) = app.editor.composite(&app.prefs.profile.clone()) else {
         // A composite that will not render is reported where it happened, by
         // `refresh_composite`; nothing useful to add here.
         return;
@@ -729,7 +754,8 @@ fn save(app: &mut ObApp, frame: Frame, path: &Path) {
 ///
 /// Always PNG, whatever came in: the source may be a JPEG, and re-encoding a
 /// censored frame as lossy JPEG can leave ghosts of a pixelated region's edges.
-/// Never the input's own name — a manual edit must not silently overwrite the
+/// Never the input's own name, because a manual edit must not silently
+/// overwrite the
 /// original.
 fn default_name(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
@@ -744,8 +770,9 @@ fn file_name(path: &Path) -> String {
 
 /// True when this page should take a dropped file instead of the batch queue.
 ///
-/// Images only. A video dropped here has no manual-edit path — there is one
-/// canvas and one frame — so it belongs in the queue, which is where a drop on
+/// Images only. A video dropped here has no manual-edit path, since there is
+/// one
+/// canvas and one frame, so it belongs in the queue, which is where a drop on
 /// any other page sends it.
 pub fn wants_drop(path: &Path) -> bool {
     matches!(ob_media::classify(path), ob_media::MediaKind::Image)
@@ -793,8 +820,9 @@ mod tests {
     }
 
     /// One frame with `held` down. The modifiers a widget reads come from
-    /// `RawInput::modifiers`, not from the events — an integration reports the
-    /// keyboard's state alongside them — so a test that only decorated its
+    /// `RawInput::modifiers`, not from the events, because an integration
+    /// reports the keyboard's state alongside them. So a test that only
+    /// decorated its
     /// events would see no Ctrl at all.
     fn run_held(app: &mut ObApp, ctx: &egui::Context, events: Vec<Event>, held: Modifiers) {
         let input = RawInput {

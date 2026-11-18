@@ -8,6 +8,8 @@ publish.workspace = true
 description = "Figura Obscura job engine: input expansion, worker pool, progress/cancel, per-file error isolation, the batch pipeline."
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
 ob-core = { workspace = true }
 ob-detect = { workspace = true }
 ob-censor = { workspace = true }

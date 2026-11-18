@@ -205,7 +205,7 @@ fn card(app: &mut ObApp, ui: &mut egui::Ui, entry: &ModelEntry) {
                             }
                         }
                         remove.on_disabled_hover_text(
-                            "This is the model in use — switch to another one first.",
+                            "This is the model in use. Switch to another one first.",
                         );
                     }
                 }

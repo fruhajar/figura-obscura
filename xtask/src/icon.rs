@@ -6,7 +6,7 @@
 //!
 //! Everything is drawn analytically rather than loaded from an artboard so the
 //! whole icon set is reproducible from `cargo xtask icons` with no design tool
-//! in the loop — the build container has neither ImageMagick nor a rasteriser.
+//! in the loop: the build container has neither ImageMagick nor a rasteriser.
 
 use image::{Rgba, RgbaImage};
 
@@ -84,7 +84,7 @@ fn blend(dst: &mut Color, src: Color, coverage: f32) {
 /// Per-cell opacity of the mosaic field.
 ///
 /// Hand-tuned rather than random: a fixed pattern that reads as a censored
-/// *blob* — denser in the middle, fading at the corners — instead of noise,
+/// *blob*, denser in the middle and fading at the corners, instead of noise,
 /// and it renders identically on every machine.
 const MOSAIC_ALPHA: [[f32; 5]; 5] = [
     [0.00, 0.18, 0.30, 0.14, 0.00],
@@ -260,8 +260,8 @@ mod tests {
         let img = render(64);
         // Centre is the redaction bar: fully opaque.
         assert_eq!(img.get_pixel(32, 32).0[3], 255);
-        // The rounded corner is outside the plate, so fully transparent —
-        // this is what stops the icon rendering as a hard square.
+        // The rounded corner is outside the plate, so fully transparent.
+        // This is what stops the icon rendering as a hard square.
         assert_eq!(img.get_pixel(0, 0).0[3], 0);
     }
 

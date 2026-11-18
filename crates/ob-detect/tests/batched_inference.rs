@@ -3,7 +3,7 @@
 //! The whole case for feeding several windows through the graph in one run is
 //! that it is the same arithmetic, arranged better. That is a claim about a
 //! real ONNX graph, not about our own code, so it is checked against a real
-//! model rather than a mock — and skipped, loudly, where no model has been
+//! model rather than a mock, and skipped loudly where no model has been
 //! downloaded.
 
 use ob_core::geometry::{Frame, Region};

@@ -2,7 +2,7 @@
 
 This directory ships verbatim inside every installer and archive: `stage.sh`
 copies its contents to `licenses/` in the staged tree. It is tracked in git
-**only** because of this file — git does not track empty directories, so
+**only** because of this file. Git doesn't track empty directories, so
 without it a fresh clone would not have the directory at all, and that is
 precisely how the release before this one came to have no license text in it.
 
@@ -24,7 +24,7 @@ curl -fsSLO --output-dir packaging/common/licenses \
 `stage.sh` now **fails** rather than warns when the text for the ffmpeg you are
 bundling is absent. Shipping an LGPL or GPL binary without its license text is a
 distribution-compliance failure, not a cosmetic omission, and it is invisible in
-the finished artifact — so it has to be caught at build time.
+the finished artifact, so it has to be caught at build time.
 
 Not bundling ffmpeg at all (omit `--ffmpeg`) carries no obligation whatsoever
 and needs nothing in this directory. See `../THIRD-PARTY.md` for the full

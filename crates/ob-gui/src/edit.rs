@@ -1,7 +1,8 @@
 //! The manual editor's document: hand-drawn censor boxes, their undo history,
 //! and the geometry that maps them onto the canvas.
 //!
-//! Everything in here is pure — no egui context, no I/O, no inference — so the
+//! Everything in here is pure, with no egui context, no I/O and no inference,
+//! so the
 //! parts that are easy to get subtly wrong are unit-testable in a container
 //! with no display server: what counts as *one* undo step, where a corner
 //! handle sits, and what a drag that leaves the frame means.
@@ -15,7 +16,7 @@ use egui::{Pos2, Rect, Vec2};
 use ob_censor::CensorError;
 use ob_core::censor::{CensorConfig, CensorStyle, RegionShape};
 use ob_core::geometry::{BBox, Detection, Frame};
-use ob_core::taxonomy::{Category, Part, Sex, State};
+use ob_core::taxonomy::Category;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,7 +36,7 @@ pub const HANDLE_PX: f32 = 9.0;
 /// the box body.
 ///
 /// Deliberately wider than the handle is drawn. Pressing near a corner is
-/// almost always an attempt to resize — that is what corners are for — so the
+/// almost always an attempt to resize, which is what corners are for, so the
 /// target is the one worth being generous with, and asking for pixel precision
 /// to hit a 9px square is the kind of thing that makes a tool feel stiff. The
 /// cost of being wrong is small: a press meant as a move, a few pixels inside a
@@ -44,8 +45,9 @@ pub const GRAB_PX: f32 = 18.0;
 
 /// A box's corner zones never take more than this share of its shorter side.
 ///
-/// Without it, [`GRAB_PX`] would swallow a small box whole — every point in a
-/// 30px box is within 18px of some corner — and it could then be resized but
+/// Without it, [`GRAB_PX`] would swallow a small box whole, since every point
+/// in a 30px box is within 18px of some corner, and it could then be resized
+/// but
 /// never moved.
 const GRAB_SHARE: f32 = 1.0 / 3.0;
 
@@ -74,10 +76,26 @@ pub struct ManualBox {
     /// a slider that silently reshaped every box already drawn was the odd one
     /// out among controls that all act on the selection.
     pub rounding: f32,
-    /// Hidden boxes stay in the list but are not drawn — a layer's eye. Kept
+    /// Hidden boxes stay in the list but are not drawn, like a layer's eye.
+    /// Kept
     /// rather than deleted so a style can be compared against the original
     /// without losing the box.
     pub visible: bool,
+    /// What the detector called this region, when the box came from one.
+    ///
+    /// `None` for a box someone drew. In review it decides which style the
+    /// profile resolves for the box, and it is what a reviewed detection is
+    /// written back out with; in the hand editor nothing reads it.
+    pub category: Option<Category>,
+    /// The confidence the detector reported, carried so a review can show it
+    /// and so writing a box back out is lossless.
+    ///
+    /// Nothing downstream acts on it, because the category filter has already
+    /// run by the time a review exists. But a box that came back from the
+    /// canvas with
+    /// a different score than it went in with would make every file the user
+    /// merely *looked at* register as edited.
+    pub score: f32,
 }
 
 impl ManualBox {
@@ -88,12 +106,35 @@ impl ManualBox {
             style,
             rounding,
             visible: true,
+            category: None,
+            score: 1.0,
+        }
+    }
+
+    /// The box as a detection, for writing a review back out.
+    ///
+    /// A drawn box has no category, so it takes the one `ob-job` reserves for
+    /// exactly that. See [`ob_job::review::MANUAL`].
+    pub fn as_detection(&self) -> Detection {
+        Detection {
+            bbox: self.rect,
+            category: self.category.unwrap_or(ob_job::review::MANUAL),
+            score: self.score,
         }
     }
 
     /// What the list calls this box: its number and its style.
     pub fn label(&self) -> String {
         format!("Box {} · {}", self.id, style_name(&self.style))
+    }
+
+    /// What a review's list calls it: its number and what the model thought it
+    /// was, or that nobody classified it.
+    pub fn review_label(&self) -> String {
+        match self.category {
+            Some(c) => format!("{} · {c}", self.id),
+            None => format!("{} · added by hand", self.id),
+        }
     }
 }
 
@@ -164,8 +205,8 @@ impl History {
         &mut self.current
     }
 
-    /// Begin a change that is part of a continuous gesture — a drag, a slider
-    /// sweep — identified by `key`.
+    /// Begin a change that is part of a continuous gesture (a drag, a slider
+    /// sweep), identified by `key`.
     ///
     /// Consecutive calls with the same key fold into the step the first one
     /// opened, so the whole gesture undoes at once.
@@ -218,7 +259,7 @@ impl History {
         true
     }
 
-    /// Replace the document and forget the history — a different image.
+    /// Replace the document and forget the history, for a different image.
     pub fn reset(&mut self, doc: EditDoc) {
         self.current = doc;
         self.past.clear();
@@ -321,7 +362,7 @@ pub enum Drag {
     /// were when the gesture began, so the result is always computed from the
     /// press position rather than accumulated frame by frame.
     ///
-    /// A move carries the whole selection — grabbing one of several selected
+    /// A move carries the whole selection. Grabbing one of several selected
     /// boxes and having the others stay behind would make the selection look
     /// like it had been forgotten. A resize carries only `id`: there is no one
     /// obvious thing "resize these four" should mean.
@@ -340,7 +381,7 @@ pub enum Drag {
 /// containing the point is moved. `None` means empty canvas: draw a new box
 /// there.
 ///
-/// `grab` is the corner radius in image pixels — see [`View::grab_in_image`].
+/// `grab` is the corner radius in image pixels. See [`View::grab_in_image`].
 pub fn hit(doc: &EditDoc, p: Pos2, selected: &[u64], grab: f32) -> Option<(u64, Grab)> {
     // Topmost first among the selected, so stacked selected boxes resolve the
     // same way bodies do.
@@ -473,7 +514,7 @@ fn clamped(b: BBox, img: Vec2) -> BBox {
 /// Draw every visible box over a copy of `source`.
 ///
 /// Each box carries its own style, so each is a separate `ob_censor::apply`
-/// call with that style as the default and no per-part overrides — the
+/// call with that style as the default and no per-part overrides, because the
 /// taxonomy does not apply to a region someone drew by hand. Padding is zero,
 /// unlike the batch default: the box *is* what the user drew, and quietly
 /// growing it by 10% would make the drawn outline a lie.
@@ -496,14 +537,14 @@ pub fn render(source: &Frame, doc: &EditDoc) -> Result<Frame, CensorError> {
 /// Dress a hand-drawn rectangle up as a detection so the shared censor path can
 /// take it.
 ///
-/// The category is never consulted — `per_part` is empty in [`render`], so
-/// `style_for` falls through to the default every time — but one has to be
-/// supplied, and an honest "nobody classified this" beats borrowing a real
-/// body part's label.
+/// The category is never consulted here: `per_part` is empty in [`render`], so
+/// `style_for` falls through to the default every time. But one has to be
+/// supplied, and it is the same sentinel a review uses, so the two mean the
+/// same thing by "nobody classified this".
 fn manual_detection(rect: BBox) -> Detection {
     Detection {
         bbox: rect,
-        category: Category::new(Sex::Unknown, Part::Face, State::Covered),
+        category: ob_core::taxonomy::cat::UNCLASSIFIED,
         score: 1.0,
     }
 }
@@ -518,9 +559,84 @@ pub fn style_name(s: &CensorStyle) -> &'static str {
     }
 }
 
+/// What the canvas is being used for, which decides how its boxes are drawn.
+///
+/// The interaction is identical either way, the same drag, resize, select and
+/// undo, and that is the point of having one canvas. What differs is where
+/// appearance comes from, and it has to differ, because the two jobs mean
+/// different things by a rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CanvasMode {
+    /// A document someone is censoring by hand. Each box carries its own style,
+    /// and the rectangle drawn is exactly the area covered, no padding, or the
+    /// outline would be a lie about what was about to happen.
+    #[default]
+    Manual,
+    /// A batch's detections, awaiting approval. Style and padding come from the
+    /// profile, so the rectangle drawn is the *detection* and the area covered
+    /// is that rectangle grown by the profile's padding. Both are painted, and
+    /// the difference between them is a thing worth seeing while tuning.
+    Review,
+}
+
+/// Build a document from a frame's detections.
+///
+/// Ids are positional and start at 1, so the numbers on screen match the rows
+/// in the list, and re-entering an item gives the same box the same number.
+pub fn doc_from_detections(dets: &[Detection], style: &CensorStyle, rounding: f32) -> EditDoc {
+    EditDoc {
+        boxes: dets
+            .iter()
+            .enumerate()
+            .map(|(i, d)| ManualBox {
+                id: i as u64 + 1,
+                rect: d.bbox,
+                style: style.clone(),
+                rounding,
+                visible: true,
+                category: Some(d.category),
+                score: d.score,
+            })
+            .collect(),
+    }
+}
+
+/// Read a reviewed document back out as detections.
+///
+/// Hidden boxes are dropped rather than carried: hiding one in a review means
+/// "do not censor this", which is the same thing deleting it means, and a
+/// hidden box that came back in the output would be the worst possible answer.
+pub fn detections_from_doc(doc: &EditDoc) -> Vec<Detection> {
+    doc.boxes
+        .iter()
+        .filter(|b| b.visible)
+        .map(|b| b.as_detection())
+        .collect()
+}
+
+/// Render a review's document: the profile decides style and padding.
+///
+/// Goes through `CensorConfig::resolve` and `apply_boxes`, which is literally
+/// the pair `ob_job::review::commit_pass` calls, so the canvas cannot drift
+/// from the file.
+pub fn render_review(
+    source: &Frame,
+    doc: &EditDoc,
+    profile: &ob_core::profile::Profile,
+) -> Result<Frame, CensorError> {
+    let dets = detections_from_doc(doc);
+    let boxes = profile
+        .censor
+        .resolve(&dets, source.width_f(), source.height_f());
+    let mut out = source.clone();
+    ob_censor::apply_boxes(&mut out, &boxes)?;
+    Ok(out)
+}
+
 /// Everything the Edit page owns: the loaded image, the document and its
 /// history, the selection, and the cached composite on screen.
 pub struct EditorState {
+    pub mode: CanvasMode,
     pub path: Option<PathBuf>,
     /// The image as decoded. Kept so every re-censor starts from clean pixels
     /// rather than from the last render, which would compound every edit.
@@ -551,6 +667,7 @@ pub struct EditorState {
 impl Default for EditorState {
     fn default() -> Self {
         Self {
+            mode: CanvasMode::default(),
             path: None,
             source: None,
             history: History::default(),
@@ -572,6 +689,7 @@ impl EditorState {
     /// Boxes are positions in a particular image; carrying them onto the next
     /// one would censor whatever happened to be at those coordinates.
     pub fn load(&mut self, path: PathBuf, frame: Frame) {
+        self.mode = CanvasMode::Manual;
         self.path = Some(path);
         self.source = Some(frame);
         self.history.reset(EditDoc::default());
@@ -607,7 +725,7 @@ impl EditorState {
         self.selection.last().and_then(|id| self.doc().find(*id))
     }
 
-    /// Where every selected box is now — the starting point of a group move.
+    /// Where every selected box is now, the starting point of a group move.
     pub fn selected_rects(&self) -> Vec<(u64, BBox)> {
         let doc = self.doc();
         self.selection
@@ -624,7 +742,7 @@ impl EditorState {
         }
     }
 
-    /// Add a box to the selection, or take it out — what Ctrl-click does.
+    /// Add a box to the selection, or take it out. What Ctrl-click does.
     ///
     /// Re-picking moves it to the end, so the controls follow the box just
     /// clicked rather than the one picked first.
@@ -716,8 +834,34 @@ impl EditorState {
     }
 
     /// The censored frame as it stands, or `None` with no image loaded.
-    pub fn composite(&self) -> Option<Result<Frame, CensorError>> {
-        self.source.as_ref().map(|src| render(src, self.doc()))
+    pub fn composite(
+        &self,
+        profile: &ob_core::profile::Profile,
+    ) -> Option<Result<Frame, CensorError>> {
+        self.source.as_ref().map(|src| match self.mode {
+            CanvasMode::Manual => render(src, self.doc()),
+            CanvasMode::Review => render_review(src, self.doc(), profile),
+        })
+    }
+
+    /// Take on a frame and a set of detections to review.
+    ///
+    /// Separate from [`load`](Self::load) because a review replaces the
+    /// document with boxes that already exist, and because its undo history
+    /// starts there: undoing past the detector's own answer, back to an empty
+    /// frame, would be undoing something nobody did.
+    pub fn load_review(&mut self, path: PathBuf, frame: Frame, dets: &[Detection]) {
+        let doc = doc_from_detections(dets, &self.new_style.clone(), self.new_rounding);
+        self.next_id = doc.boxes.len() as u64 + 1;
+        self.mode = CanvasMode::Review;
+        self.path = Some(path);
+        self.source = Some(frame);
+        self.history.reset(doc);
+        self.selection.clear();
+        self.drag = None;
+        self.error = None;
+        self.texture = None;
+        self.rendered = None;
     }
 
     /// The id the next box would get. Test-only: ids are an implementation
@@ -971,7 +1115,7 @@ mod tests {
         // past the 9px handle as drawn, is still a resize. Pressing near a
         // corner is what someone does when they want to resize.
         let doc = doc_with(&[BBox::new(0.0, 0.0, 200.0, 200.0)]);
-        // Past the 9px the handle is drawn at — which is the point, and which
+        // Past the 9px the handle is drawn at, which is the point, and which
         // fails if `GRAB_PX` is ever brought back down to the handle's size.
         let just_inside = pos2(14.0, 14.0);
         assert_eq!(
@@ -1139,7 +1283,7 @@ mod tests {
             [f.data[i], f.data[i + 1], f.data[i + 2]]
         };
         assert_eq!(px(&out, 12, 12), [255, 0, 0]);
-        // Outside the box, untouched — no padding is applied to a hand-drawn
+        // Outside the box, untouched: no padding is applied to a hand-drawn
         // region.
         assert_eq!(px(&out, 6, 6), px(&src, 6, 6));
         assert_eq!(px(&out, 30, 30), px(&src, 30, 30));

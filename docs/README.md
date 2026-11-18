@@ -1,17 +1,21 @@
 # Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the nine crates fit together, the
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: how the nine crates fit together, the
   pipeline every front end shares, the threading and cancellation model, and the
   invariants worth not breaking.
-- **[PERFORMANCE.md](PERFORMANCE.md)** — what dominates a run, what has been
+- **[PERFORMANCE.md](PERFORMANCE.md)**: what dominates a run, what has been
   measured, how to reproduce it (`cargo xtask bench`), and the optimisations
   that were tried and rejected.
-- **[HOST-BUILD.md](HOST-BUILD.md)** — building on a real machine, including the
+- **[HOST-BUILD.md](HOST-BUILD.md)**: building on a real machine, including the
   per-vendor GPU prerequisites and how to tell whether a GPU build is actually
   using the GPU.
-- **[RELEASING.md](RELEASING.md)** — cutting a release: the version bump, the tag
-  that builds all three platforms, what the notes have to say, and the smoke test
-  before the draft is published.
+- **[DETECTORS.md](DETECTORS.md)**: the five third-party models Obscura can
+  download, each one's licence and published operating point, the region-size
+  caveat that decides how much padding you need, and what has not been
+  measured here.
+- **[RELEASING.md](RELEASING.md)**: cutting a release. The version bump, the tag
+  that builds all three platforms, what the notes have to say, and the smoke
+  test before the draft is published.
 
 The project overview lives in [`../README.md`](../README.md), which is what
 GitHub shows on the front page.

@@ -16,7 +16,7 @@ use ob_track::TrackConfig;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// How many finished-file lines the activity log keeps.
@@ -41,7 +41,7 @@ pub fn build_detector(
 }
 
 /// IoU at which two members' boxes are treated as the same region. Matches the
-/// CLI's `build_ensemble` — the same models voting the same way must produce
+/// CLI's `build_ensemble`: the same models voting the same way must produce
 /// the same output whichever front end drove them.
 const ENSEMBLE_NMS_IOU: f32 = 0.45;
 
@@ -61,7 +61,7 @@ pub struct EnsembleSpec {
 
 impl EnsembleSpec {
     /// Read the spec out of the saved preferences, dropping a companion that
-    /// duplicates the primary — selecting a model as its own corroborator would
+    /// duplicates the primary. Selecting a model as its own corroborator would
     /// otherwise let one model agree with itself.
     pub fn from_prefs(prefs: &crate::prefs::Prefs) -> Self {
         let primary = prefs.profile.model_id.clone();
@@ -169,7 +169,7 @@ pub struct RunState {
     /// own `FileDone` can credit its whole cost without counting the part the
     /// frames already reported twice. Reset when a file starts or ends.
     current_work: f64,
-    /// Seconds per work unit — seeded from the last run on this machine and
+    /// Seconds per work unit, seeded from the last run on this machine and
     /// refined as this one proceeds.
     pub calibration: Calibration,
 }
@@ -243,9 +243,9 @@ impl RunState {
 
     /// Seconds remaining.
     ///
-    /// With a scan this is available from the first frame of the run — the
-    /// point at which someone deciding whether to leave it going overnight
-    /// actually wants it — and is weighted by what each remaining file costs
+    /// With a scan this is available from the first frame of the run, which is
+    /// the point at which someone deciding whether to leave it going overnight
+    /// actually wants it, and is weighted by what each remaining file costs
     /// rather than by how many are left.
     pub fn eta_secs(&self) -> Option<f64> {
         if let Some(remaining) = self.remaining_work() {
@@ -266,7 +266,7 @@ impl RunState {
     /// Re-derive the rate from everything finished so far.
     ///
     /// Called as files land, so a batch whose first estimate was built on the
-    /// previous machine's rate — or on the built-in default — converges on the
+    /// previous machine's rate, or on the built-in default, converges on the
     /// truth within the first few files instead of staying wrong all run.
     fn recalibrate(&mut self) {
         let credited = self.credited_work();
@@ -329,11 +329,45 @@ impl RunState {
 }
 
 /// A batch run in flight.
+/// Which half of a batch a handle is running.
+///
+/// The three share all their plumbing (one worker thread, one progress
+/// channel, one [`RunState`]) and differ only in which `ob_job` entry point
+/// they call and what they leave behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Detect and write in one pass. What the app has always done.
+    Direct,
+    /// Detect only, keeping the geometry and writing nothing.
+    Detect,
+    /// Write from a reviewed geometry, with no detector involved.
+    Commit,
+}
+
+impl Phase {
+    /// What the status bar calls this while it runs.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Phase::Direct => "Running",
+            Phase::Detect => "Detecting",
+            Phase::Commit => "Writing",
+        }
+    }
+}
+
 pub struct RunHandle {
     rx: Receiver<ProgressEvent>,
     pub cancel: CancelToken,
     /// Where output is being written, for the "Open folder" action.
     pub output_dir: PathBuf,
+    pub phase: Phase,
+    /// [`Phase::Detect`] only: what the pass found, published when it finishes.
+    ///
+    /// Through a mutex rather than down the progress channel because it arrives
+    /// once, at the end, and threading a whole batch's geometry through an
+    /// event enum that every other variant is a few words wide would be a poor
+    /// trade.
+    review: Arc<Mutex<Option<ob_job::review::Review>>>,
 }
 
 impl RunHandle {
@@ -350,6 +384,73 @@ impl RunHandle {
         output_dir: PathBuf,
         detect_every: u32,
     ) -> Self {
+        Self::spawn_phase(
+            Phase::Direct,
+            profile,
+            settings,
+            spec,
+            inputs,
+            output_dir,
+            detect_every,
+            None,
+        )
+    }
+
+    /// Phase one: run the detector over the batch, writing nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_detect(
+        profile: &Profile,
+        settings: &SettingValues,
+        spec: &EnsembleSpec,
+        inputs: Vec<PathBuf>,
+        output_dir: PathBuf,
+        detect_every: u32,
+    ) -> Self {
+        Self::spawn_phase(
+            Phase::Detect,
+            profile,
+            settings,
+            spec,
+            inputs,
+            output_dir,
+            detect_every,
+            None,
+        )
+    }
+
+    /// Phase two: write the reviewed geometry out.
+    ///
+    /// Takes no model: the review *is* the decision, and letting a detector run
+    /// here would let it overrule what someone just approved.
+    pub fn spawn_commit(
+        profile: &Profile,
+        review: ob_job::review::Review,
+        output_dir: PathBuf,
+        detect_every: u32,
+    ) -> Self {
+        Self::spawn_phase(
+            Phase::Commit,
+            profile,
+            &SettingValues::new(),
+            &EnsembleSpec::default(),
+            Vec::new(),
+            output_dir,
+            detect_every,
+            Some(review),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_phase(
+        phase: Phase,
+        profile: &Profile,
+        settings: &SettingValues,
+        spec: &EnsembleSpec,
+        inputs: Vec<PathBuf>,
+        output_dir: PathBuf,
+        detect_every: u32,
+        reviewed: Option<ob_job::review::Review>,
+    ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = CancelToken::new();
 
@@ -358,6 +459,8 @@ impl RunHandle {
         let spec = spec.clone();
         let out = output_dir.clone();
         let worker_cancel = cancel.clone();
+        let review: Arc<Mutex<Option<ob_job::review::Review>>> = Arc::new(Mutex::new(None));
+        let result = review.clone();
 
         std::thread::spawn(move || {
             // `ob_job::run` needs a `Sync` progress closure because images are
@@ -367,15 +470,21 @@ impl RunHandle {
                 let _ = send.lock().unwrap_or_else(|e| e.into_inner()).send(ev);
             };
 
-            let detector = match spec.build(&settings) {
-                Ok(d) => d,
-                Err(e) => {
-                    emit(ProgressEvent::FileError {
-                        path: PathBuf::from(&spec.primary),
-                        error: e,
-                    });
-                    emit(ProgressEvent::Finished { ok: 0, failed: 1 });
-                    return;
+            // A commit needs no model, and building one would be both a
+            // pointless wait and a chance to fail for no reason.
+            let detector = if phase == Phase::Commit {
+                None
+            } else {
+                match spec.build(&settings) {
+                    Ok(d) => Some(d),
+                    Err(e) => {
+                        emit(ProgressEvent::FileError {
+                            path: PathBuf::from(&spec.primary),
+                            error: e,
+                        });
+                        emit(ProgressEvent::Finished { ok: 0, failed: 1 });
+                        return;
+                    }
                 }
             };
 
@@ -395,9 +504,26 @@ impl RunHandle {
                 video_opts: VideoEncodeOpts::default(),
                 cancel: worker_cancel,
             };
-            if let Err(e) = ob_job::run(&cfg, detector.as_ref(), &emit) {
-                // An error out of `run` itself (input expansion, mostly) never
-                // reaches the per-file channel, so report it explicitly.
+            let outcome = match phase {
+                Phase::Direct => {
+                    ob_job::run(&cfg, detector.as_deref().expect("built above"), &emit).map(|_| ())
+                }
+                Phase::Detect => ob_job::review::detect_pass(
+                    &cfg,
+                    detector.as_deref().expect("built above"),
+                    &emit,
+                )
+                .map(|found| {
+                    *result.lock().unwrap_or_else(|e| e.into_inner()) = Some(found);
+                }),
+                Phase::Commit => {
+                    let r = reviewed.unwrap_or_default();
+                    ob_job::review::commit_pass(&cfg, &r, &emit).map(|_| ())
+                }
+            };
+            if let Err(e) = outcome {
+                // An error out of the pass itself (input expansion, mostly)
+                // never reaches the per-file channel, so report it explicitly.
                 emit(ProgressEvent::FileError {
                     path: PathBuf::new(),
                     error: e.to_string(),
@@ -410,7 +536,14 @@ impl RunHandle {
             rx,
             cancel,
             output_dir,
+            phase,
+            review,
         }
+    }
+
+    /// Take the review a [`Phase::Detect`] worker produced, if it has finished.
+    pub fn take_review(&self) -> Option<ob_job::review::Review> {
+        self.review.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
     /// Drain pending events into `state`. Returns false once the worker is
@@ -497,8 +630,9 @@ fn apply_event(ev: ProgressEvent, state: &mut RunState) {
 
 /// A batch being measured on a worker thread.
 ///
-/// Probing is I/O over every file in the batch — a header read each for images,
-/// an `ffprobe` subprocess each for videos — so it never runs on the UI thread
+/// Probing is I/O over every file in the batch, a header read each for images
+/// and an `ffprobe` subprocess each for videos, so it never runs on the UI
+/// thread
 /// and never blocks the run. It is started when the input list changes, so by
 /// the time anyone presses Run the measurement is usually already in hand.
 ///
@@ -553,15 +687,15 @@ pub struct PreviewDone {
 /// A preview being rendered on a worker thread.
 ///
 /// Two flavours, because the two halves of a preview cost wildly different
-/// amounts. [`PreviewJob::detect`] loads the model and runs inference —
-/// hundreds of milliseconds at best, seconds on a tiled 4K frame.
+/// amounts. [`PreviewJob::detect`] loads the model and runs inference, which
+/// is hundreds of milliseconds at best and seconds on a tiled 4K frame.
 /// [`PreviewJob::compose`] only re-paints boxes onto a frame that was already
 /// detected, which is fast enough to keep up with a dragged slider. Both still
 /// run off the UI thread: even compositing a 4K frame with a large blur sigma
 /// is more than one frame's budget.
 pub struct PreviewJob {
     rx: Receiver<Result<PreviewDone, String>>,
-    /// True for the inference flavour — the UI says "detecting…" rather than
+    /// True for the inference flavour, so the UI says "detecting…" rather than
     /// "rendering…", because only one of the two is worth waiting through.
     pub is_detect: bool,
 }
@@ -644,7 +778,7 @@ mod tests {
         }
         // A 50k-image batch must not grow an unbounded Vec of paths.
         assert_eq!(s.log.len(), LOG_CAPACITY);
-        // It is the tail that is kept — the oldest entries are dropped.
+        // It is the tail that is kept; the oldest entries are dropped.
         assert_eq!(
             s.log.back().unwrap().path,
             PathBuf::from(format!("{}.png", LOG_CAPACITY + 49))

@@ -3,13 +3,13 @@
 //! The build container has no display server and no GPU, so the interface could
 //! otherwise only be checked for *panics*, never for how it actually looks. egui
 //! is a two-stage renderer, and only the second stage needs hardware: `Context`
-//! produces `ClippedPrimitive`s — textured, vertex-coloured triangles — and the
+//! produces `ClippedPrimitive`s (textured, vertex-coloured triangles) and the
 //! usual glow/wgpu backends just draw them. Drawing them on the CPU instead is
 //! a few hundred lines and yields real PNGs of the real UI.
 //!
 //! This is a faithful rasterisation of what ships, not a mock: same widgets,
 //! same theme, same layout pass, same font atlas. What it does not reproduce is
-//! anything the GPU backend does differently — it renders in gamma space, like
+//! anything the GPU backend does differently. It renders in gamma space, like
 //! egui's non-linear-framebuffer path, so colours may differ marginally from a
 //! machine configured for a linear framebuffer.
 //!
@@ -76,7 +76,7 @@ impl Canvas {
             .map_err(|e| e.to_string())
     }
 
-    /// Fraction of pixels that differ from the clear colour — a cheap check
+    /// Fraction of pixels that differ from the clear colour: a cheap check
     /// that something was actually drawn.
     pub fn painted_fraction(&self, clear: Color32) -> f32 {
         let c = clear.to_array();
@@ -139,7 +139,7 @@ impl Textures {
             };
 
             match image_delta.pos {
-                // A patch into an existing atlas — egui grows the font atlas
+                // A patch into an existing atlas. egui grows the font atlas
                 // this way as new glyphs are rasterised, so ignoring patches
                 // would silently lose characters.
                 Some([px, py]) => {
@@ -236,7 +236,7 @@ fn triangle(canvas: &mut Canvas, v: [&Vertex; 3], texture: &Texture, clip: Rect)
         for x in min_x..max_x {
             let p = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
             // Barycentric coordinates, normalised by the signed area so the
-            // winding order does not matter — egui emits both.
+            // winding order does not matter, since egui emits both.
             let w0 = edge(p1, p2, p) / area;
             let w1 = edge(p2, p0, p) / area;
             let w2 = edge(p0, p1, p) / area;
@@ -262,7 +262,7 @@ fn triangle(canvas: &mut Canvas, v: [&Vertex; 3], texture: &Texture, clip: Rect)
     }
 }
 
-/// Twice the signed area of the triangle (a, b, c) — positive for one winding.
+/// Twice the signed area of the triangle (a, b, c), positive for one winding.
 fn edge(a: Pos2, b: Pos2, c: Pos2) -> f32 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
@@ -270,7 +270,7 @@ fn edge(a: Pos2, b: Pos2, c: Pos2) -> f32 {
 /// Render `run_ui` at the given size and return the finished canvas.
 ///
 /// Runs several frames before capturing. egui is an immediate-mode library that
-/// settles over a frame or two — sizes that depend on last frame's content
+/// settles over a frame or two. Sizes that depend on last frame's content
 /// (`available_width` inside a just-created panel, a `ScrollArea`'s extent) are
 /// wrong on frame one, and capturing that would show layout artefacts the user
 /// never sees.

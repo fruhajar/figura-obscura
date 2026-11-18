@@ -12,8 +12,8 @@
 #               accident: nearly every convenient prebuilt binary is GPL.
 #   LGPL     -> the default and the recommendation: lightest obligations.
 #
-# Not bundling at all is also fully supported — Obscura finds a user-installed ffmpeg
-# on PATH — and carries no obligations whatsoever. See THIRD-PARTY.md.
+# Not bundling at all is also fully supported. Obscura finds a user-installed
+# ffmpeg on PATH and carries no obligations whatsoever. See THIRD-PARTY.md.
 set -euo pipefail
 
 allow_gpl=false
@@ -75,4 +75,4 @@ MSG
 fi
 
 version="$(printf '%s' "$banner" | head -n1)"
-echo "ok: LGPL-compatible FFmpeg — $version"
+echo "ok: LGPL-compatible FFmpeg: $version"

@@ -1,4 +1,4 @@
-; Figura Obscura — Inno Setup installer
+; Figura Obscura, Inno Setup installer
 ;
 ; Build with:  iscc /DStageDir=..\..\target\stage packaging\windows\figura-obscura.iss
 ; (packaging\windows\build.ps1 does the whole thing: cargo build, stage, compile.)
@@ -7,13 +7,13 @@
 ; cannot censor anything without detector weights, and the weights are far too
 ; large to embed. Rather than reimplementing a downloader in Pascal Script, the
 ; final page runs `obscura.exe setup`, which is the same code path the app and the
-; CLI use — one implementation, one set of error messages, one thing to test.
+; CLI use: one implementation, one set of error messages, one thing to test.
 
 #ifndef StageDir
   #define StageDir "..\..\target\stage"
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.6.0"
+  #define AppVersion "1.0.0"
 #endif
 
 #define AppName      "Figura Obscura"
@@ -60,7 +60,7 @@ Name: "addtopath"; Description: "Add the &command-line tool (obscura.exe) to PAT
 [Files]
 Source: "{#StageDir}\obscura-gui.exe";  DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\obscura.exe";      DestDir: "{app}"; Flags: ignoreversion
-; Bundled ffmpeg — ob-media looks in {app}\bin before falling back to PATH.
+; Bundled ffmpeg. ob-media looks in {app}\bin before falling back to PATH.
 Source: "{#StageDir}\bin\*";       DestDir: "{app}\bin"; Flags: ignoreversion skipifsourcedoesntexist
 ; GPU execution providers, present only in a CUDA build.
 Source: "{#StageDir}\onnxruntime_providers_*"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -112,7 +112,7 @@ begin
     'Detection models',
     'Figura Obscura needs a detection model before it can censor anything.',
     'Models are about 56 MB in total. They are downloaded once and then used ' +
-    'entirely offline — nothing you process ever leaves your computer.' + #13#10#13#10 +
+    'entirely offline. Nothing you process ever leaves your computer.' + #13#10#13#10 +
     'If you skip this, you can download them any time from the Models page ' +
     'inside the app.',
     False, False);
@@ -147,7 +147,7 @@ begin
 
   if DownloadFailed then
     MsgBox('The detection models could not be downloaded.' + #13#10#13#10 +
-           'Figura Obscura is installed and will still start — open the Models ' +
+           'Figura Obscura is installed and will still start. Open the Models ' +
            'page inside the app to try again once you are online.',
            mbInformation, MB_OK);
 end;

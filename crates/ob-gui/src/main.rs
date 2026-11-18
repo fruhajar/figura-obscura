@@ -1,4 +1,4 @@
-//! `ob-gui` — the Figura Obscura desktop application.
+//! `ob-gui`, the Figura Obscura desktop application.
 //!
 //! On Windows this is a GUI-subsystem binary (see the `windows_subsystem`
 //! attribute) so launching it from a shortcut does not also open a console
@@ -11,6 +11,7 @@ mod downloads;
 mod edit;
 mod pages;
 mod prefs;
+mod review;
 mod run;
 /// Software UI renderer used by the screenshot tests (never shipped).
 #[cfg(test)]
@@ -33,7 +34,7 @@ fn main() -> eframe::Result<()> {
     {
         // Hand-rolled rather than pulling clap into the GUI for one flag. On
         // Windows this is a GUI-subsystem binary with no console attached, so
-        // nothing appears there — the About page carries the same string.
+        // nothing appears there, so the About page carries the same string.
         println!("obscura-gui {}", ob_core::version::LONG);
         // Which providers this build has, for the same reason the CLI prints
         // them: a CPU-only build and a GPU one are otherwise identical from the
@@ -62,8 +63,12 @@ fn main() -> eframe::Result<()> {
         "figura-obscura",
         options,
         Box::new(|cc| {
-            theme::install(&cc.egui_ctx);
-            Ok(Box::<ObApp>::default())
+            // The app's own saved scheme, installed before the first frame
+            // draws: `theme::install` on its own would paint one frame of the
+            // default dark palette over a light-mode desktop.
+            let mut app = Box::<ObApp>::default();
+            app.apply_scheme(&cc.egui_ctx);
+            Ok(app)
         }),
     )
 }

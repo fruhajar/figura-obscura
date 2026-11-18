@@ -1,7 +1,7 @@
 //! Stamps the build with the commit it came from.
 //!
 //! `CARGO_PKG_VERSION` alone cannot answer the question that actually matters
-//! in a bug report — *which build is this?* — because every build between two
+//! in a bug report, *which build is this?*, because every build between two
 //! releases carries the same `0.4.2`. A user running a binary from before a
 //! fix, and a user running one from after it, report the same version. So the
 //! commit goes in too.
@@ -19,7 +19,7 @@ fn main() {
     // Rebuild when the checkout moves. `.git/HEAD` covers checkouts and
     // commits on a detached HEAD; the file HEAD points at covers a commit on a
     // branch. Neither notices an uncommitted edit, so `-dirty` can go stale
-    // until something else triggers a rebuild of this crate — acceptable for a
+    // until something else triggers a rebuild of this crate. Acceptable for a
     // diagnostic string, and the hash itself stays right.
     let git_dir = repo.join(".git");
     if git_dir.join("HEAD").exists() {

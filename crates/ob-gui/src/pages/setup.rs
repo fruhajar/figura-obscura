@@ -32,7 +32,7 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
             RichText::new(
                 "One more step: Figura Obscura needs a detection model before it can \
                  censor anything. Models are downloaded once and then used entirely \
-                 offline — nothing you process ever leaves your machine.",
+                 offline, and nothing you process ever leaves your machine.",
             )
             .color(p.text_dim),
         );
@@ -123,7 +123,7 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
 
         if pending.is_empty() && !busy {
             ui.label(
-                RichText::new("All set — the recommended models are installed.").color(p.success),
+                RichText::new("All set. The recommended models are installed.").color(p.success),
             );
             ui.add_space(10.0);
             if theme::primary_button(ui, "Start using Figura Obscura", true).clicked() {
@@ -153,7 +153,7 @@ pub fn show(app: &mut ObApp, ui: &mut egui::Ui) {
                     if ui.button("Cancel downloads").clicked() {
                         app.downloads.cancel_all();
                     }
-                } else if ui.button("Skip — I'll do this later").clicked() {
+                } else if ui.button("Skip, I'll do this later").clicked() {
                     // An offline install is a legitimate state, and the Models
                     // page can do this any time. Don't trap anyone here.
                     finish(app);
