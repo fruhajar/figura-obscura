@@ -26,13 +26,6 @@ scripts.
 > `cargo clippy --all-targets` all pass on rustc 1.98.0. Clippy reports six
 > long-standing style warnings; nothing fails.
 >
-> Two things are genuinely unverified, and both are worth knowing before you
-> rely on the tool. **GPU builds have never run on real hardware**, so the
-> releases are CPU builds. And **detection quality has only been observed with
-> one model** (`nudenet-320n`), so how well the others do across art styles is
-> an open question. Try it on your own material rather than taking the model
-> cards' word for it.
->
 > Where to read more: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the
 > pieces fit together, [`docs/DETECTORS.md`](docs/DETECTORS.md) for the models
 > themselves and the limits of each,
