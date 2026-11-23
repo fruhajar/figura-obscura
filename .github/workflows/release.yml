@@ -67,19 +67,9 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      # Pinned, not `stable`. ort-sys 2.0.0-rc.10's build script finds the
-      # target directory with `out_dir.ancestors().nth(3)`, which assumes the
-      # old Cargo layout `build/<pkg>-<hash>/out`. Newer Cargo splits that into
-      # `build/<pkg>/<hash>/out`, one level deeper, so the script resolves
-      # `target/release/build` instead of `target/release` and then tries to
-      # copy DirectML.dll into a `build/examples` directory that does not
-      # exist. Windows only: that copy path is #[cfg(windows)], and the
-      # CPU-only Linux dist is statically linked and ships no dylibs to copy.
-      # This broke v1.0.0 with nothing in the repo changed, because `stable`
-      # moved under us. A release should pin its compiler anyway.
-      #
-      # The `@stable` ref picks the action's own code; the `toolchain` input is
-      # what pins the compiler.
+      # The real pin is rust-toolchain.toml, which cargo reads and which wins
+      # over whatever this step installs; see the reasoning in that file. This
+      # input just pre-installs the same version so cargo has nothing to fetch.
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98.0"

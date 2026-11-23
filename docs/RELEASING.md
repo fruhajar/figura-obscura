@@ -218,8 +218,11 @@ commands are in [`HOST-BUILD.md`](HOST-BUILD.md).
   so the script resolves `target/release/build` and panics copying
   `DirectML.dll` into a `build/examples` directory that does not exist. Windows
   only, because that fallback is `#[cfg(windows)]` and the CPU-only Linux dist
-  is statically linked with no dylibs to copy. Both workflows therefore pin
-  `dtolnay/rust-toolchain@1.98.0` rather than tracking `stable`.
+  is statically linked with no dylibs to copy. The pin that matters is
+  **`rust-toolchain.toml`**: cargo reads it and uses the channel named there
+  whatever a CI action installed, so pinning in the workflows alone does
+  nothing. It said `channel = "stable"` from the initial commit, which is how
+  this got through a workflow pin that looked correct.
 - **The Windows job is the one that breaks, and it breaks quietly.** Three
   times now: a `Source:` line added to the `.iss` with no matching `Copy-Item`
   (25 days, fixed in 0.5.1), and the `ort-sys` layout bug above, which took out

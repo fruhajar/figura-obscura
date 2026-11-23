@@ -1,3 +1,17 @@
+# Pinned, not "stable". This file is the authority: cargo reads it and uses the
+# channel named here whatever a CI action installed, so pinning in the workflows
+# alone does nothing.
+#
+# ort-sys 2.0.0-rc.10 locates the target directory with
+# `out_dir.ancestors().nth(3)`, which assumes Cargo's old build layout
+# `build/<pkg>-<hash>/out`. Newer Cargo splits that into
+# `build/<pkg>/<hash>/out`, one level deeper, so the script resolves
+# `target/<profile>/build` and panics copying DirectML.dll into a
+# `build/examples` directory that does not exist. Windows only: that copy
+# fallback is #[cfg(windows)], and the CPU-only Linux dist is statically linked
+# with no dylibs to copy.
+#
+# Unpinning needs an `ort` bump first. See docs/RELEASING.md.
 [toolchain]
-channel = "stable"
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]

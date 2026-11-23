@@ -25,8 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pinned to match the release build. `stable` moving forward is what
-      # broke the v1.0.0 Windows installer; see the note in release.yml.
+      # The real pin is rust-toolchain.toml; this just pre-installs the same
+      # version so cargo has nothing to fetch.
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98.0"
